@@ -30,8 +30,23 @@ public sealed record MiPlayOpenDeviceRequest(IPAddress SenderAddress, int MediaP
 
     public byte[] ToPayloadBytes() => Encoding.UTF8.GetBytes(ToPayloadText());
 
+    /// <summary>
+    /// Builds the raw command frame used before SafetyData is installed. Native post-auth
+    /// sessions route openDevice through sendCmdPayload, so use ToSafetyDataCommandFrame
+    /// once a verified SafetyData cipher exists.
+    /// </summary>
     public byte[] ToCommandFrame(ushort sequence) => MiPlayCommandFrameCodec.Encode(
         MiPlayProtocolConstants.OpenDeviceCommand,
         sequence,
         ToPayloadBytes());
+
+    public byte[] ToSafetyDataCommandFrame(ushort sequence, MiPlaySafetyDataSessionCipher cipher)
+    {
+        ArgumentNullException.ThrowIfNull(cipher);
+
+        return MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.OpenDeviceCommand,
+            sequence,
+            cipher.EncryptVersion1(ToPayloadBytes()));
+    }
 }

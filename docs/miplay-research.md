@@ -63,6 +63,8 @@ wfd://<sender-ip>:<dynamic-media-port>?mirrorMode=1
 
 这说明控制帧格式和打开媒体回连的字符串是可验证原语；不意味着 Windows 已具备成功打开实际会话的前置认证。
 
+继续限址复核 native 后，`Java_com_xiaomi_miplay_mylibrary_mirror_CmdSessionControl_openDevice`（`0x16d924`）使用格式串 `wfd://%s:%d?mirrorMode=%d`，Java `CmdSessionControl.openDevice(...)` 又要求 `sessionType == 2` 且 `cmdHandler != 0`。`CmdSource::openDevice`（`0x1755a4`）读取并递增 `CmdSource +0x2c0` 的序号，随后调用 `sendCmdPayload(command=0, payload=<wfd-url>, len=<strlen>)`；因此在已安装 SafetyDataDeal 的 post-auth 会话中，`OpenDevice` 也必须由 SafetyData 包裹。项目只新增离线 `ToSafetyDataCommandFrame(...)` 和单测锁定这个形态，probe 仍不会发送 `OpenDevice`、RTSP、音频或播放帧。
+
 ## 原生样本中确认的现代安全通路
 
 分析样本：

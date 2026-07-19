@@ -48,6 +48,37 @@ public sealed class MiPlayProtocolTests
     }
 
     [Fact]
+    public void PostAuthOpenDeviceFrameUsesEncryptedPayloadAndSessionCbcState()
+    {
+        var key = Encoding.ASCII.GetBytes("0123456789abcdef");
+        var iv = Encoding.ASCII.GetBytes("fedcba9876543210");
+        var sender = new MiPlaySafetyDataSessionCipher(key, iv);
+        var previousSafetyData = sender.EncryptVersion1("previous-auth-frame"u8);
+        var request = new MiPlayOpenDeviceRequest(IPAddress.Parse("192.168.31.8"), 7_236);
+        var plaintext = request.ToPayloadBytes();
+
+        var frame = request.ToSafetyDataCommandFrame(sequence: 4, sender);
+        var rawFrame = request.ToCommandFrame(sequence: 4);
+
+        Assert.NotEqual(rawFrame, frame);
+        Assert.True(MiPlayCommandFrameCodec.TryDecode(frame, out var decodedFrame, out var bytesConsumed));
+        Assert.NotNull(decodedFrame);
+        Assert.Equal(frame.Length, bytesConsumed);
+        Assert.Equal(MiPlayProtocolConstants.OpenDeviceCommand, decodedFrame.Command);
+        Assert.Equal((ushort)4, decodedFrame.Sequence);
+        Assert.NotEqual(plaintext, decodedFrame.Payload);
+        Assert.NotEqual(MiPlaySafetyDataCodec.EncryptVersion1(plaintext, key, iv), decodedFrame.Payload);
+
+        var receiver = new MiPlaySafetyDataSessionCipher(key, iv);
+        Assert.True(receiver.TryDecryptVersion1(previousSafetyData, out var previousDecoded));
+        Assert.NotNull(previousDecoded);
+        Assert.Equal("previous-auth-frame"u8.ToArray(), previousDecoded.Plaintext);
+        Assert.True(receiver.TryDecryptVersion1(decodedFrame.Payload, out var decodedSafetyData));
+        Assert.NotNull(decodedSafetyData);
+        Assert.Equal(plaintext, decodedSafetyData.Plaintext);
+    }
+
+    [Fact]
     public void CommandFrameDecoderConsumesOneFrameAndLeavesFollowingData()
     {
         var encoded = MiPlayCommandFrameCodec.Encode(17, 9, [1, 2, 3]);
