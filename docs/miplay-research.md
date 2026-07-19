@@ -495,6 +495,8 @@ authMsgAck == HMAC(selected algorithm, local authMsg, mAuthKey)
 - `RTP/AVP/TCP`：模式 4、TCP datagram/interleaved；
 - `RTP/AVP/MPT;unicast`：模式 5，创建 KCP 会话。
 
+同一原生库还出现了 RTSP 响应侧格式串：`RTSP/1.0 `、`CSeq: %d`、`Content-Length: 0` / `Content-Length: %d`、`Public: org.wfa.wfd1.0, GET_PARAMETER, SET_PARAMETER`，以及带 `server_port` / `userid` 的 `Transport: RTP/AVP/MPT;unicast;client_port=%d;server_port=%d;userid=%d`。因此项目新增的 `MiPlayRtspResponseCodec` 只离线生成标准 RTSP/1.0 response 字节并自动写入精确 `Content-Length`；它没有 socket listener，也没有被 `OpenDevice` 或 probe 发送路径引用。
+
 MPT/KCP 参数为 conv `0x1234`、MTU 1400、发送/接收窗口 256、10 ms 更新周期、fast resend 1、关闭拥塞窗口、最小 RTO 100 ms，`nodelay = 0`。
 
 音频路径为 `AAC/ADTS → MPEG-TS → RTP → UDP/TCP/MPT(KCP)`：48 kHz、16-bit、双声道、256 kbps AAC-LC；每个访问单元有 7 字节 MPEG-2 ADTS 头；RTP 使用 MPEG-TS payload type 33。默认最大 RTP 包为 1472 字节，即 12 字节 RTP 头后最多 7 个 188 字节 TS 包。样本的主动播放缓冲为 5 GHz 下 0.8 秒、其他网络下 1.0 秒；这是该实现的策略，不能当作协议硬下限。
@@ -507,7 +509,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 
 - `_mi-connect._udp.local` 发现及 `appsData` 多应用容器解析；
 - 旧式 `$` 控制帧的编码/解码和长度校验；
-- `OpenDevice` 载荷、会话随机材料和诊断辅助；
+- `OpenDevice` 载荷、认证后 SafetyData 封装、RTSP 请求/响应诊断原语、会话随机材料和诊断辅助；
 - 已确认旧式 `0x0028`/`0x0029` 挑战应答、`0x0036`/`0x0037` 版本帧、OPack 安全内层、`SafetyInfo` offer/ack JSON、`SafetyAuth` JSON/HMAC、Lyra 四字段 secret JSON、非 Lyra TCP `SessionInfo` 端点顺序，以及类型 1/2 `SafetyKeyDeal` 材料选择的纯离线实现；
 - `DLNACast.Probe --miplay-safety-probe=<IPv4>`：显式真机实验入口，只允许一次经过命令号校验的 `0x0028`/`0x0029` 往返与有限观察；
 - `DLNACast.Probe --miplay-safety-offer=<IPv4>`：在完成上述受限旧式挑战应答后，额外发送一次精确的原生默认 `0x1400` offer，并只记录后续帧；它绝不发送 `0x1403`、媒体或未知控制数据；

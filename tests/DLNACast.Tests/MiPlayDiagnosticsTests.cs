@@ -158,6 +158,39 @@ public sealed class MiPlayDiagnosticsTests
     }
 
     [Fact]
+    public void EncodesRtspOptionsOkWithObservedPublicHeaderAndZeroBody()
+    {
+        var response = MiPlayRtspResponseCodec.EncodeOk(
+            cseq: 1,
+            [new MiPlayRtspHeader("Public", "org.wfa.wfd1.0, GET_PARAMETER, SET_PARAMETER")]);
+
+        Assert.Equal(
+            "RTSP/1.0 200 OK\r\n" +
+            "CSeq: 1\r\n" +
+            "Public: org.wfa.wfd1.0, GET_PARAMETER, SET_PARAMETER\r\n" +
+            "Content-Length: 0\r\n\r\n",
+            Encoding.ASCII.GetString(response));
+    }
+
+    [Fact]
+    public void EncodesRtspSetupOkWithMptTransportAndExactBodyLength()
+    {
+        var body = "wfd_audio_codecs: AAC 00000001 00\r\n"u8.ToArray();
+        var response = MiPlayRtspResponseCodec.EncodeOk(
+            cseq: 3,
+            body,
+            [new MiPlayRtspHeader("Transport", "RTP/AVP/MPT;unicast;client_port=7236;server_port=7236;userid=9")]);
+
+        Assert.Equal(
+            "RTSP/1.0 200 OK\r\n" +
+            "CSeq: 3\r\n" +
+            "Transport: RTP/AVP/MPT;unicast;client_port=7236;server_port=7236;userid=9\r\n" +
+            "Content-Length: 35\r\n\r\n" +
+            "wfd_audio_codecs: AAC 00000001 00\r\n",
+            Encoding.ASCII.GetString(response));
+    }
+
+    [Fact]
     public void IncompleteRtspBodyIsNotConsumed()
     {
         var bytes = "SET_PARAMETER * RTSP/1.0\r\nContent-Length: 4\r\n\r\nab"u8.ToArray();
