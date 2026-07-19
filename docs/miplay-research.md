@@ -322,7 +322,7 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 
 默认 Windows 等价取值仅用于 probe：`sourceName="DLNACast Windows"`、蓝牙 MAC 为空 hash、`canAlonePlayCtrl="0"`、`model="Windows"`、`romVersion=Environment.OSVersion.VersionString`、`appVersion=1`；可用 `--miplay-local-source-name=`、`--miplay-local-bluetooth-mac=`、`--miplay-local-can-alone-play-ctrl=`、`--miplay-local-model=`、`--miplay-local-rom-version=`、`--miplay-local-app-version=` 覆盖。该 probe 明确不发送 heartbeat、媒体、RTSP、音频、播放、openDevice 或其他业务控制；如果未观察到可解密 `0x001f`，就不会发送 `0x0058`。
 
-截至本记录，staged 版本尚未对真机执行；下一次实机行为若获授权，应只对单台 S12 发送完整认证 + `0x001e`，并以“是否收到同 seq 且可解密的 `0x001f`”作为是否继续 `0x0058` 的唯一门槛。
+staged 版本已对单台 `192.168.10.4` 执行一次：local TCP 端点为 `192.168.10.9:4079`，前置 `0x0036` / `0x0029` / `0x1400` 与完整 SafetyAuth 互验均成功；随后只发送 `0x001e getDeviceInfo` seq `0x0004`，SafetyData encryptedPayloadLength `25`。设备在累计 7 个 follow-up frame 后主动关闭 TCP；未收到 `0x001f getDeviceInfo ACK`，因此 staged probe 没有发送任何 `0x0058`。这把旧三帧结果进一步收窄为：S12 在当前 Windows 会话材料/状态下，对认证后的单条 `0x001e` 仍无可解密 ACK。
 
 #### 2026-07-19 `0x0022` notify payload 离线解析
 
@@ -524,7 +524,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 1. `0x1401 result="0"` 在两台 S12 上会继续进入 `0x1402`，但 result 值本身的命名语义、各固件差异，以及其他可接受组合仍未知；
 2. `authKeyTypes`、`authAlgorithmTypes`、`integrityTypes`、`aesKeyTypes`、`aesIvTypes` 的位/枚举语义，以及设备实际可接受的组合；
 3. 完整 SafetyAuth 互验已在 `192.168.10.4` 上通过：本端 `0x1402` 得到设备 `0x1403 authMsgAck` HMAC 验证，本端也已回复设备 `0x1402`；只读观察显示源端认证后保持静默时设备会主动关闭 8899/TCP；
-4. 该验证仍只覆盖认证层；单次 `0x001a` heartbeat 未得到 `0x001b` ack，单次 `0x001e getDeviceInfo` 未得到 device-info 响应，认证后的 `0x0058 setLocalDeviceInfo` payload 与 staged probe 已离线编码锁定；旧三帧 probe 已对 `192.168.10.4` 单次发送但没有得到 post-auth 响应，当前 staged 版本尚未实机执行；keepalive/reaper 完整行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
+4. 该验证仍只覆盖认证层；单次 `0x001a` heartbeat 未得到 `0x001b` ack，单次 `0x001e getDeviceInfo` 未得到 device-info 响应，认证后的 `0x0058 setLocalDeviceInfo` payload 与 staged probe 已离线编码锁定；旧三帧 probe 已对 `192.168.10.4` 单次发送但没有得到 post-auth 响应，当前 staged 版本也已对 `192.168.10.4` 单次发送认证后的 `0x001e`，未收到 `0x001f`，所以未发送 `0x0058`；keepalive/reaper 完整行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
 5. 非 Xiaomi 系统如何建立 Continuity/Lyra 所需的受信任身份、设备确认和会话密钥同步；
 6. 在不破坏现有播放会话的前提下，用单台测试音箱验证完整认证、回连、媒体协商与实际延迟。
 
