@@ -230,7 +230,23 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 | post-auth 只读观察 | 认证完成后未再收到新的 post-auth command；设备主动关闭 TCP。累计 follow-up frame 数为 `7`，其中包含认证前状态帧、`0x1401`、`0x1402`、`0x1403` |
 | 发送边界 | 认证完成后没有发送任何数据；日志明确记录 `no post-auth data was sent` |
 
-结论：SafetyAuth 互验在 S12 上可重复验证，且本地完成条件与 native `0x1403 -> DealSafetyDone` 静态路径一致。设备在认证完成后、源端保持静默时会关闭 8899/TCP；这支持下一步优先静态闭环 keepalive/reaper 或第一个无媒体 post-auth 控制入口，而不是直接进入媒体、RTSP 或播放。
+随后对第二台 S12 `192.168.10.7` 做同一 observe-only 复验，发送边界完全相同，仍未发送 heartbeat、RTSP、音频、播放、openDevice 或其他业务控制帧。
+
+| 项目 | 结果 |
+| --- | --- |
+| TCP 端点 | local `192.168.10.9:12391`，peer `192.168.10.7:8899` |
+| 设备版本帧 | `0x0037` = `2.1.4052010\0` |
+| 前置帧 | `0x0036` seq `0x0001`、`0x0029` seq `0x00DE`、`0x1400` seq `0x0002` |
+| 设备前置状态帧 | 只读收到三个 `0x0022` 状态/媒体信息帧；探针未回复这些帧 |
+| SafetyInfo | `0x1401 result=0`，选择 `(authKey=1, authAlgorithm=4, integrity=1, aesKey=1, aesIv=2)` |
+| 本端 challenge | 发送加密 `0x1402` seq `0x0003`，SafetyData 长度 `73`，candidate `peer-first:observed-s12-inbound-iv-type1` |
+| 设备 challenge | 收到 `0x1402` seq `0x0000`，同一 candidate 解成 OPack `cmd/authMsg`，JSON 长度 `53` |
+| 本端 acknowledgement | 发送加密 `0x1403` seq `0x0000`，SafetyData 长度 `121` |
+| 设备 acknowledgement | 收到 `0x1403` seq `0x0003`，解成 OPack `ack/authMsgAck`，HMAC 校验通过 |
+| post-auth 只读观察 | 认证完成后未再收到新的 post-auth command；设备主动关闭 TCP。累计 follow-up frame 数为 `7` |
+| 发送边界 | 认证完成后没有发送任何数据；日志明确记录 `no post-auth data was sent` |
+
+结论：SafetyAuth 互验现在已在两台 S12（`192.168.10.4` / `192.168.10.7`）上重复验证，且本地完成条件与 native `0x1403 -> DealSafetyDone` 静态路径一致。两台设备在认证完成后、源端保持静默时都会关闭 8899/TCP；这支持下一步优先静态闭环 keepalive/reaper 或第一个无媒体 post-auth 控制入口，而不是直接进入媒体、RTSP 或播放。
 
 ### OPack 内层封装
 
@@ -425,7 +441,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 1. `0x1401 result="0"` 在两台 S12 上会继续进入 `0x1402`，但 result 值本身的命名语义、各固件差异，以及其他可接受组合仍未知；
 2. `authKeyTypes`、`authAlgorithmTypes`、`integrityTypes`、`aesKeyTypes`、`aesIvTypes` 的位/枚举语义，以及设备实际可接受的组合；
 3. 完整 SafetyAuth 互验已在 `192.168.10.4` 上通过：本端 `0x1402` 得到设备 `0x1403 authMsgAck` HMAC 验证，本端也已回复设备 `0x1402`；只读观察显示源端认证后保持静默时设备会主动关闭 8899/TCP；
-4. 该验证仍只覆盖认证层；`192.168.10.7`、认证后的 keepalive/reaper 行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
+4. 该验证仍只覆盖认证层；认证后的 keepalive/reaper 真机行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
 5. 非 Xiaomi 系统如何建立 Continuity/Lyra 所需的受信任身份、设备确认和会话密钥同步；
 6. 在不破坏现有播放会话的前提下，用单台测试音箱验证完整认证、回连、媒体协商与实际延迟。
 
