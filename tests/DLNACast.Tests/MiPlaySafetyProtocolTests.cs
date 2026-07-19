@@ -814,6 +814,51 @@ public sealed class MiPlaySafetyProtocolTests
         Assert.NotNull(getDeviceInfoDecoded);
         Assert.Empty(getDeviceInfoDecoded.Plaintext);
     }
+
+    [Fact]
+    public void PostAuthSetLocalDeviceInfoUsesEncryptedJsonPayloadAndSessionCbcState()
+    {
+        var key = Encoding.ASCII.GetBytes("0123456789abcdef");
+        var iv = Encoding.ASCII.GetBytes("fedcba9876543210");
+        var sender = new MiPlaySafetyDataSessionCipher(key, iv);
+
+        var previousSafetyData = sender.EncryptVersion1("previous-auth-frame"u8);
+        var getDeviceInfoSafetyData = sender.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+        var localDeviceInfoPayload = MiPlayLocalDeviceInfoPayloadCodec.EncodeSourceName(
+            sourceName: "Windows",
+            bluetoothMac: "",
+            canAlonePlayCtrl: "0");
+        var setLocalDeviceInfoSafetyData = sender.EncryptVersion1(localDeviceInfoPayload);
+
+        Assert.True(setLocalDeviceInfoSafetyData.Length > localDeviceInfoPayload.Length);
+        Assert.NotEqual(localDeviceInfoPayload, setLocalDeviceInfoSafetyData);
+        Assert.NotEqual(
+            MiPlaySafetyDataCodec.EncryptVersion1(localDeviceInfoPayload, key, iv),
+            setLocalDeviceInfoSafetyData);
+
+        var setLocalDeviceInfoFrame = MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.SetLocalDeviceInfoCommand,
+            sequence: 5,
+            setLocalDeviceInfoSafetyData);
+        Assert.True(MiPlayCommandFrameCodec.TryDecode(setLocalDeviceInfoFrame, out var decodedFrame, out var bytesConsumed));
+        Assert.NotNull(decodedFrame);
+        Assert.Equal(setLocalDeviceInfoFrame.Length, bytesConsumed);
+        Assert.Equal(MiPlayProtocolConstants.SetLocalDeviceInfoCommand, decodedFrame.Command);
+        Assert.Equal((ushort)5, decodedFrame.Sequence);
+        Assert.Equal(setLocalDeviceInfoSafetyData, decodedFrame.Payload);
+
+        var receiver = new MiPlaySafetyDataSessionCipher(key, iv);
+        Assert.True(receiver.TryDecryptVersion1(previousSafetyData, out var previousDecoded));
+        Assert.NotNull(previousDecoded);
+        Assert.Equal("previous-auth-frame"u8.ToArray(), previousDecoded.Plaintext);
+        Assert.True(receiver.TryDecryptVersion1(getDeviceInfoSafetyData, out var getDeviceInfoDecoded));
+        Assert.NotNull(getDeviceInfoDecoded);
+        Assert.Empty(getDeviceInfoDecoded.Plaintext);
+        Assert.True(receiver.TryDecryptVersion1(setLocalDeviceInfoSafetyData, out var setLocalDeviceInfoDecoded));
+        Assert.NotNull(setLocalDeviceInfoDecoded);
+        Assert.Equal(localDeviceInfoPayload, setLocalDeviceInfoDecoded.Plaintext);
+    }
+
     [Fact]
     public void LegacySafetyChallengeProducesTheVerifiedResponseFrame()
     {
