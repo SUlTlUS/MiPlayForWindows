@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion>10.0.22000.0</TargetPlatformMinVersion>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <AssemblyName>DLNACast.App</AssemblyName>
+    <RootNamespace>DLNACast.App</RootNamespace>
+    <AssemblyTitle>DLNA Cast for Windows</AssemblyTitle>
+    <Product>DLNA Cast for Windows</Product>
+    <Version>0.2.4</Version>
+    <FileVersion>0.2.4.0</FileVersion>
+    <AssemblyVersion>0.2.4.0</AssemblyVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DLNACast.Core\DLNACast.Core.csproj" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+  </ItemGroup>
+</Project>

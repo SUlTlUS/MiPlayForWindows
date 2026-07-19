@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/DLNACast.Core/DLNACast.Core.csproj" />
+  <Project Path="src/DLNACast.App/DLNACast.App.csproj" />
+  <Project Path="tests/DLNACast.Tests/DLNACast.Tests.csproj" />
+  <Project Path="tools/DLNACast.Probe/DLNACast.Probe.csproj" />
+</Solution>

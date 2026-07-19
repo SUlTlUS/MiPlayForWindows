@@ -1,0 +1,24 @@
+DLNA Cast for Windows - Third-Party Notices
+===========================================
+
+NAudio 2.3.0
+Copyright Mark Heath and contributors.
+Licensed under the MIT License.
+https://github.com/naudio/NAudio
+
+NAudio.Lame 2.1.0
+Copyright Corey Murtagh.
+The managed wrapper is licensed under the MIT License.
+https://github.com/Corey-M/NAudio.Lame
+
+The NAudio.Lame package includes dynamically loaded libmp3lame binaries from
+the LAME project. LAME is distributed under the GNU Lesser General Public
+License. The DLLs remain separate files in this distribution so recipients can
+replace them with a compatible build. Corresponding LAME source and license:
+https://lame.sourceforge.io/
+https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+
+Rssdp 5.0.0
+Copyright Troy Willmot.
+Licensed under the MIT License.
+https://github.com/Yortw/RSSDP
