@@ -589,6 +589,17 @@ static async Task ProbeMiPlayLegacySafetyAsync(
             : "without sending 0x1403";
         Console.WriteLine($"The device closed the connection after {observedFrames} follow-up frame(s), {safetyAuthBoundary}. The probe sends no further data.");
     }
+    catch (IOException exception) when (exception.InnerException is SocketException socketException)
+    {
+        var safetyAuthBoundary = completedMutualSafetyAuth && sentPostAuthBoundaryDescription is { } abortedPostAuthBoundary
+            ? $"after mutual SafetyAuth completion and {abortedPostAuthBoundary}; no further data was sent"
+            : completedMutualSafetyAuth
+            ? "after mutual SafetyAuth completion; no post-auth data was sent"
+            : sentSafetyAuthAcknowledgement
+            ? "after one 0x1403 acknowledgement"
+            : "without sending 0x1403";
+        Console.WriteLine($"The TCP connection was aborted while reading after {observedFrames} follow-up frame(s), socketError={socketException.SocketErrorCode}, nativeError={socketException.NativeErrorCode}, message={JsonSerializer.Serialize(exception.Message)}, {safetyAuthBoundary}. The probe sends no further data.");
+    }
 }
 
 static (byte[] SourceNamePayload, byte[] LocalDeviceInfoPayload, string SourceNameJson, string LocalDeviceInfoJson) CreatePostAuthLocalDeviceInfoPayloads(string[] args)
