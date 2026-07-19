@@ -291,7 +291,7 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 
 #### 2026-07-19 `0x0058 setLocalDeviceInfo` payload 静态闭环
 
-继续沿 `MiPlayAudioService.cmdSessionSuccess(...)` 的 Java 上层顺序恢复 `0x0058`。APK 18.0.0.3 的静态证据显示，认证完成后上层会调用两次 `CmdSessionControl.setLocalDeviceInfo(byte[])`，二者都进入 native `CmdSource::setLocalDeviceInfo()` 并通过 `sendCmdPayload(command=0x0058, payload=<bytes>, len=<bytes>)` 发送；但本阶段只恢复 payload，不发送真机帧。
+继续沿 `MiPlayAudioService.cmdSessionSuccess(...)` 的 Java 上层顺序恢复 `0x0058`。APK 18.0.0.3 的静态证据显示，认证完成后上层会调用两次 `CmdSessionControl.setLocalDeviceInfo(byte[])`，二者都进入 native `CmdSource::setLocalDeviceInfo()` 并通过 `sendCmdPayload(command=0x0058, payload=<bytes>, len=<bytes>)` 发送。最初阶段只恢复 payload；随后在 payload、顺序与 CBC 状态被 78/78 离线单测锁定后，已新增显式门控 probe，并只对 `192.168.10.4` 做了一次受限实机发送。
 
 | 上层入口 | Java payload builder | JSON 字段与顺序 | 已实现离线行为 |
 | --- | --- | --- | --- |
