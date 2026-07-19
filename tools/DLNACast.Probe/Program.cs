@@ -335,7 +335,15 @@ static async Task ProbeMiPlayLegacySafetyAsync(
                             postAuthLocalDeviceInfoPayloads is { } stagedLocalDeviceInfoPayloads &&
                             stagedPostAuthGetDeviceInfoSequence is { } getDeviceInfoSequence)
                         {
-                            if (followUp.Sequence == getDeviceInfoSequence)
+                            var stagedDecision = MiPlayPostAuthProbePolicy.EvaluateStagedLocalDeviceInfoGate(
+                                awaitingGetDeviceInfoAcknowledgement: awaitingPostAuthDeviceInfoAckBeforeLocalDeviceInfo,
+                                hasLocalDeviceInfoPayloads: true,
+                                alreadySentLocalDeviceInfo: sentPostAuthLocalDeviceInfoFrames,
+                                observedCommand: followUp.Command,
+                                observedSequence: followUp.Sequence,
+                                expectedGetDeviceInfoSequence: getDeviceInfoSequence,
+                                decryptedPayloadLength: plaintext.Length);
+                            if (stagedDecision.CanSend)
                             {
                                 await SendPostAuthLocalDeviceInfoFramesAsync(
                                     stagedLocalDeviceInfoPayloads,
@@ -344,7 +352,7 @@ static async Task ProbeMiPlayLegacySafetyAsync(
                             }
                             else
                             {
-                                Console.WriteLine($"Refused staged local device info send: 0x{MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand:X4} sequence 0x{followUp.Sequence:X4} did not match pending 0x{MiPlayProtocolConstants.GetDeviceInfoCommand:X4} sequence 0x{getDeviceInfoSequence:X4}. No response or control data will be sent.");
+                                Console.WriteLine($"Refused staged local device info send: {stagedDecision.Reason} Observed command=0x{followUp.Command:X4}, sequence=0x{followUp.Sequence:X4}, pending 0x{MiPlayProtocolConstants.GetDeviceInfoCommand:X4} sequence=0x{getDeviceInfoSequence:X4}, decryptedPayloadLength={plaintext.Length}. No response or control data will be sent.");
                             }
                         }
                     }

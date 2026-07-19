@@ -948,6 +948,68 @@ public sealed class MiPlaySafetyProtocolTests
     }
 
     [Fact]
+    public void PostAuthLocalDeviceInfoPolicyRequiresMatchingNonEmptyGetDeviceInfoAck()
+    {
+        var accepted = MiPlayPostAuthProbePolicy.EvaluateStagedLocalDeviceInfoGate(
+            awaitingGetDeviceInfoAcknowledgement: true,
+            hasLocalDeviceInfoPayloads: true,
+            alreadySentLocalDeviceInfo: false,
+            observedCommand: MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand,
+            observedSequence: 4,
+            expectedGetDeviceInfoSequence: 4,
+            decryptedPayloadLength: 40);
+
+        Assert.True(accepted.CanSend);
+
+        var wrongSequence = MiPlayPostAuthProbePolicy.EvaluateStagedLocalDeviceInfoGate(
+            awaitingGetDeviceInfoAcknowledgement: true,
+            hasLocalDeviceInfoPayloads: true,
+            alreadySentLocalDeviceInfo: false,
+            observedCommand: MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand,
+            observedSequence: 5,
+            expectedGetDeviceInfoSequence: 4,
+            decryptedPayloadLength: 40);
+        var emptyPayload = MiPlayPostAuthProbePolicy.EvaluateStagedLocalDeviceInfoGate(
+            awaitingGetDeviceInfoAcknowledgement: true,
+            hasLocalDeviceInfoPayloads: true,
+            alreadySentLocalDeviceInfo: false,
+            observedCommand: MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand,
+            observedSequence: 4,
+            expectedGetDeviceInfoSequence: 4,
+            decryptedPayloadLength: 0);
+        var duplicate = MiPlayPostAuthProbePolicy.EvaluateStagedLocalDeviceInfoGate(
+            awaitingGetDeviceInfoAcknowledgement: true,
+            hasLocalDeviceInfoPayloads: true,
+            alreadySentLocalDeviceInfo: true,
+            observedCommand: MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand,
+            observedSequence: 4,
+            expectedGetDeviceInfoSequence: 4,
+            decryptedPayloadLength: 40);
+        var wrongCommand = MiPlayPostAuthProbePolicy.EvaluateStagedLocalDeviceInfoGate(
+            awaitingGetDeviceInfoAcknowledgement: true,
+            hasLocalDeviceInfoPayloads: true,
+            alreadySentLocalDeviceInfo: false,
+            observedCommand: MiPlayProtocolConstants.SetLocalDeviceInfoAcknowledgementCommand,
+            observedSequence: 4,
+            expectedGetDeviceInfoSequence: 4,
+            decryptedPayloadLength: 40);
+
+        Assert.False(wrongSequence.CanSend);
+        Assert.False(emptyPayload.CanSend);
+        Assert.False(duplicate.CanSend);
+        Assert.False(wrongCommand.CanSend);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MiPlayPostAuthProbePolicy.EvaluateStagedLocalDeviceInfoGate(
+                awaitingGetDeviceInfoAcknowledgement: true,
+                hasLocalDeviceInfoPayloads: true,
+                alreadySentLocalDeviceInfo: false,
+                observedCommand: MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand,
+                observedSequence: 4,
+                expectedGetDeviceInfoSequence: 4,
+                decryptedPayloadLength: -1));
+    }
+
+    [Fact]
     public void LegacySafetyChallengeProducesTheVerifiedResponseFrame()
     {
         var challengeFrame = MiPlayCommandFrameCodec.Encode(
