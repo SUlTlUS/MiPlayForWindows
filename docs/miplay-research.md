@@ -273,6 +273,20 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 - native `CmdSource::getDeviceInfo()`（`0x1779a4`）直接递增 `CmdSource +0x2c0` 序号并调用 `sendCmdPayload(command=0x001e, payload=null, len=0)`；`CmdSource::setLocalDeviceInfo()`（`0x1771e8`）则调用 `sendCmdPayload(command=0x0058, payload=<bytes>, len=<bytes>)`。
 
 因此新的最小可逆探针只实现 `0x001e getDeviceInfo`：它必须在完整 SafetyAuth 互验之后发送一帧 SafetyData 加密空 payload，然后只读观察并尝试按同一个入站 CBC state 解密响应；它不会发送 `0x0058 setLocalDeviceInfo`、`openDevice`、媒体信息、RTSP、音频或播放控制。`0x0058` 需要先恢复本地设备信息 JSON 的精确字段与账号/来源语义，暂不进入真机发送范围。
+#### 2026-07-19 单次 post-auth getDeviceInfo 真机验证
+
+在上述静态闭环与 73/73 离线测试通过后，对单台 `192.168.10.4` 执行一次 `--miplay-native-safety-mutual-auth-device-info-probe=<IPv4>`。发送边界为：完整 SafetyAuth 互验成功后，只额外发送一次 SafetyData 加密空 payload 的 `0x001e getDeviceInfo`；随后只读观察，不发送 `0x0058 setLocalDeviceInfo`、第二个 `getDeviceInfo`、heartbeat、RTSP、音频、播放、openDevice 或其他业务控制帧。
+
+| 项目 | 结果 |
+| --- | --- |
+| TCP 端点 | local `192.168.10.9:5281`，peer `192.168.10.4:8899` |
+| 前置认证 | `0x0036` / `0x0029` / `0x1400` / 本端加密 `0x1402` / 本端加密 `0x1403` 均按互验 probe 成功完成 |
+| 设备 acknowledgement | 收到 `0x1403` seq `0x0003`，HMAC 校验通过，满足本地 `DealSafetyDone` 前置条件 |
+| post-auth getDeviceInfo | 发送 `0x001e` seq `0x0004`，SafetyData 加密 payload 长度 `25`，candidate `peer-first:observed-s12-inbound-iv-type1` |
+| 设备后续行为 | 未返回 device-info ack/notify 或其他 post-auth command；设备主动关闭 TCP。累计 follow-up frame 数仍为 `7` |
+| 发送边界 | `0x001e` 后没有发送任何数据；未发送 `0x0058`、heartbeat、openDevice、媒体或播放控制 |
+
+结论：`0x001e getDeviceInfo` 的命令号、序号和 SafetyData 空 payload 形态已按 APK 静态证据实现并实机发送，但单独发送它仍不能让 S12 维持命令会话，也没有得到可解密响应。当前缺口更可能不只是“第一条 Java 上层调用”，而是 native 会话对象里某个尚未复原的连接状态、listener 环境、设备能力/账号上下文，或 `0x0058 setLocalDeviceInfo` 及其前置字段。`0x0058` 在精确 payload 未恢复前仍不进入真机发送范围。
 ### OPack 内层封装
 
 现代通路不是把 JSON 直接放进旧式帧。`sendCmdData2`（`0x17b998`）先构造 OPack 内层；`OPackBuf::packString` 已确认只复制原始字符串字节，**不**额外写入长度。因此首字节是标签文本自身的单字节长度：
@@ -468,7 +482,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 1. `0x1401 result="0"` 在两台 S12 上会继续进入 `0x1402`，但 result 值本身的命名语义、各固件差异，以及其他可接受组合仍未知；
 2. `authKeyTypes`、`authAlgorithmTypes`、`integrityTypes`、`aesKeyTypes`、`aesIvTypes` 的位/枚举语义，以及设备实际可接受的组合；
 3. 完整 SafetyAuth 互验已在 `192.168.10.4` 上通过：本端 `0x1402` 得到设备 `0x1403 authMsgAck` HMAC 验证，本端也已回复设备 `0x1402`；只读观察显示源端认证后保持静默时设备会主动关闭 8899/TCP；
-4. 该验证仍只覆盖认证层；单次 `0x001a` heartbeat 未得到 `0x001b` ack，认证后的 `0x001e getDeviceInfo` 响应、`0x0058 setLocalDeviceInfo` 精确 payload、keepalive/reaper 完整行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
+4. 该验证仍只覆盖认证层；单次 `0x001a` heartbeat 未得到 `0x001b` ack，单次 `0x001e getDeviceInfo` 未得到 device-info 响应，认证后的 `0x0058 setLocalDeviceInfo` 精确 payload、keepalive/reaper 完整行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
 5. 非 Xiaomi 系统如何建立 Continuity/Lyra 所需的受信任身份、设备确认和会话密钥同步；
 6. 在不破坏现有播放会话的前提下，用单台测试音箱验证完整认证、回连、媒体协商与实际延迟。
 
