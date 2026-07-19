@@ -10,6 +10,10 @@ public static class MiPlayProtocolConstants
     public const int CommandHeaderLength = 9;
     public const ushort OpenDeviceCommand = 0;
 
+    // Native post-auth keepalive commands; static evidence shows they still pass through SafetyData when enabled.
+    public const ushort HeartbeatCommand = 0x001A;
+    public const ushort HeartbeatAcknowledgementCommand = 0x001B;
+
     // Legacy challenge/response that precedes the modern SafetyInfo exchange.
     public const ushort LegacySafetyChallengeCommand = 0x0028;
     public const ushort LegacySafetyAcknowledgementCommand = 0x0029;

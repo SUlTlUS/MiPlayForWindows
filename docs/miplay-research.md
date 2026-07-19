@@ -209,9 +209,11 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 
 #### 2026-07-19 认证后只读观察验证
 
-继续限址静态复核 `DealSafetyDone()`（`0x17be70`）后，post-auth 边界被收窄为“认证完成标志 + listener 通知 + 定时器”：该函数会设置 `CmdSource +0x3a8 = 1`，记录认证耗时，在 listener 存在时通过 vtable offset `0x50` 发出事件值 `0x00030D41`，并在 `CmdSource +0xfc != 1` 时调用 `scheduleReaper()` 与 `scheduleKeepAlive()`。`scheduleReaper()` 构造 message id `6` 并按 `CmdSource +0xf8` 秒延迟投递；`scheduleKeepAlive()` 构造 message id `7` 并按 `CmdSource +0xf0` 秒延迟投递。`sendHeartBeat()` 本身发送空 payload 的 `0x001a` 并递增 `CmdSource +0x2c0` 序号，`sendHeartBeatAck(int)` 发送空 payload 的 `0x001b`。
+继续限址静态复核 `DealSafetyDone()`（`0x17be70`）后，post-auth 边界被收窄为“认证完成标志 + listener 通知 + 定时器”：该函数会设置 `CmdSource +0x3a8 = 1`，记录认证耗时，在 listener 存在时通过 vtable offset `0x50` 发出事件值 `0x00030D41`，并在 `CmdSource +0xfc != 1` 时调用 `scheduleReaper()` 与 `scheduleKeepAlive()`。`CmdSource::onMessageReceived` 的跳表已静态复原：`what=6` 进入 reaper/liveness 分支，`what=7` 直接发送 heartbeat。构造函数默认值显示 `CmdSource +0xf0 = 5` 秒（keepalive interval）、`+0xf4 = 15` 秒（liveness window）、`+0xf8 = 1` 秒（reaper interval）、`+0xfc = 2`。
 
-这些证据说明 native 认证后很可能依赖 keepalive/reaper 定时器继续维持命令会话，但 `0x001a`/`0x001b` 是否仍经过 SafetyData、首次发送时机、以及设备在无后续控制帧时的关闭策略尚未由确定性测试和真机共同闭环。因此本阶段只新增只读观察模式，不实现或发送 heartbeat/control。
+`sendHeartBeat()` / `what=7` 分支发送空 payload 的 `0x001a` 并递增 `CmdSource +0x2c0` 序号，`sendHeartBeatAck(int)` 发送空 payload 的 `0x001b`。`sendCmdPayload()` 在 `CmdSource +0x3c0` 的 `SafetyDataDeal` 存在时无条件调用 vtable offset `0x10` 加密函数，再套 `$` 命令头；因此静态上 `0x001a`/`0x001b` 也应当使用 SafetyData 加密，即使原始 payload 长度为 0。项目已添加离线单测覆盖“空 payload 在会话 CBC state 下加密为 25-byte SafetyData 并封装为 `0x001a` 帧”。
+
+这些证据说明 native 认证后依赖 keepalive/reaper 定时器或 listener 上层事件继续维持命令会话；不过项目尚未向真机发送 `0x001a`/`0x001b`，也尚未确认设备在无上层业务帧时的关闭策略。因此本阶段仍只实现离线 heartbeat 原语和只读观察模式，不发送 heartbeat/control。
 
 新增 `--miplay-native-safety-mutual-auth-observe-probe=<IPv4>` 后，对单台 `192.168.10.4` 做一次实机复验。它发送的认证帧与互验 probe 相同，认证完成后继续保持连接读 5 秒；在该窗口内不发送 heartbeat、RTSP、音频、播放、openDevice 或任何其他 post-auth 控制帧。
 
@@ -414,7 +416,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 - `DLNACast.Probe --miplay-native-safety-auth-probe=<IPv4>`：在同一受限发送边界内，仅当唯一解出 `0x1402 cmd/authMsg` 后发送一次加密 `0x1403` HMAC acknowledgement，随后只观察；它绝不发送媒体、RTSP、播放或其他业务控制数据；
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-probe=<IPv4>`：在同一受限发送边界内，按 native `onRecvCmd` 静态顺序于 `0x1401` 后发送一次本端加密 `0x1402` challenge，只用 verified observed S12 candidate，随后最多回复一次设备 `0x1402` 的加密 `0x1403`，并只校验设备 `0x1403 authMsgAck`；它绝不发送媒体、RTSP、播放或其他业务控制数据；
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-observe-probe=<IPv4>`：发送范围与互验 probe 相同；只有在本端 `0x1402` 与设备 `0x1402` 均完成 `0x1403` HMAC 验证后，继续只读观察一个 5 秒窗口，不发送 post-auth heartbeat、RTSP、音频、播放、openDevice 或其他控制帧；
-- 覆盖上述离线协议原语的 71 个单元测试（2026-07-19：71/71 通过）。
+- 覆盖上述离线协议原语的 72 个单元测试（2026-07-19：72/72 通过）。
 
 这些测试验证的是本地字节序、边界条件和解析行为，并不等同于音箱上的认证、播放或端到端延迟验证。
 

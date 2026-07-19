@@ -703,6 +703,42 @@ public sealed class MiPlaySafetyProtocolTests
     }
 
     [Fact]
+    public void PostAuthHeartbeatUsesEncryptedEmptyPayloadAndSessionCbcState()
+    {
+        var key = Encoding.ASCII.GetBytes("0123456789abcdef");
+        var iv = Encoding.ASCII.GetBytes("fedcba9876543210");
+        var sender = new MiPlaySafetyDataSessionCipher(key, iv);
+
+        var previousSafetyData = sender.EncryptVersion1("previous-auth-frame"u8);
+        var heartbeatSafetyData = sender.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+
+        Assert.Equal(25, heartbeatSafetyData.Length);
+        Assert.Equal((byte)16, heartbeatSafetyData[4]);
+        Assert.NotEqual(
+            MiPlaySafetyDataCodec.EncryptVersion1(ReadOnlySpan<byte>.Empty, key, iv),
+            heartbeatSafetyData);
+
+        var heartbeatFrame = MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.HeartbeatCommand,
+            sequence: 4,
+            heartbeatSafetyData);
+        Assert.True(MiPlayCommandFrameCodec.TryDecode(heartbeatFrame, out var decodedFrame, out var bytesConsumed));
+        Assert.NotNull(decodedFrame);
+        Assert.Equal(heartbeatFrame.Length, bytesConsumed);
+        Assert.Equal(MiPlayProtocolConstants.HeartbeatCommand, decodedFrame.Command);
+        Assert.Equal((ushort)4, decodedFrame.Sequence);
+        Assert.Equal(heartbeatSafetyData, decodedFrame.Payload);
+
+        var receiver = new MiPlaySafetyDataSessionCipher(key, iv);
+        Assert.True(receiver.TryDecryptVersion1(previousSafetyData, out var previousDecoded));
+        Assert.NotNull(previousDecoded);
+        Assert.Equal("previous-auth-frame"u8.ToArray(), previousDecoded.Plaintext);
+        Assert.True(receiver.TryDecryptVersion1(heartbeatSafetyData, out var heartbeatDecoded));
+        Assert.NotNull(heartbeatDecoded);
+        Assert.Empty(heartbeatDecoded.Plaintext);
+    }
+
+    [Fact]
     public void LegacySafetyChallengeProducesTheVerifiedResponseFrame()
     {
         var challengeFrame = MiPlayCommandFrameCodec.Encode(
