@@ -140,6 +140,47 @@ public sealed class MiPlaySafetyProtocolTests
     }
 
     [Fact]
+    public void LocalDeviceInfoSourceNamePayloadMatchesNativeJsonAndMacHash()
+    {
+        var payload = MiPlayLocalDeviceInfoPayloadCodec.EncodeSourceName(
+            sourceName: "小米手机",
+            bluetoothMac: "AA:BB:CC:DD:EE:FF",
+            canAlonePlayCtrl: "0");
+
+        Assert.Equal(
+            """{"sourceName":"小米手机","mSourceBtMac":"7D6D7EC9459BDD10988ABAF6BFA5232F","canAlonePlayCtrl":"0","canHeadsetCtrl":"1"}""",
+            Encoding.UTF8.GetString(payload));
+    }
+
+    [Fact]
+    public void LocalDeviceInfoSourceNamePayloadUsesEmptyHashWhenBluetoothMacIsMissing()
+    {
+        var payload = MiPlayLocalDeviceInfoPayloadCodec.EncodeSourceName(
+            sourceName: "Windows",
+            bluetoothMac: "",
+            includeControlFields: false);
+
+        Assert.Equal(
+            """{"sourceName":"Windows","mSourceBtMac":""}""",
+            Encoding.UTF8.GetString(payload));
+        Assert.Throws<ArgumentException>(() =>
+            MiPlayLocalDeviceInfoPayloadCodec.EncodeSourceName("", bluetoothMac: null));
+    }
+
+    [Fact]
+    public void LocalDeviceInfoModelPayloadMatchesNativeSetLocalDeviceInfo2()
+    {
+        var payload = MiPlayLocalDeviceInfoPayloadCodec.EncodeLocalDeviceInfo(
+            model: "Xiaomi 14",
+            romVersion: "OS1.0.1",
+            appVersion: 100000105);
+
+        Assert.Equal(
+            """{"model":"Xiaomi 14","romVersion":"OS1.0.1","appVersion":100000105}""",
+            Encoding.UTF8.GetString(payload));
+    }
+
+    [Fact]
     public void TcpSessionInfoDerivesType1KeyWithPeerBeforeLocalOrdering()
     {
         var session = new MiPlayTcpSessionInfo(
