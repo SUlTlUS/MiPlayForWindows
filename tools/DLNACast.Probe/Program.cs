@@ -34,6 +34,8 @@ if (mdnsArgument is not null)
     return;
 }
 
+var nativeSafetyMutualAuthHeartbeatArgument = args.FirstOrDefault(argument =>
+    argument.StartsWith("--miplay-native-safety-mutual-auth-heartbeat-probe=", StringComparison.OrdinalIgnoreCase));
 var nativeSafetyMutualAuthObserveArgument = args.FirstOrDefault(argument =>
     argument.StartsWith("--miplay-native-safety-mutual-auth-observe-probe=", StringComparison.OrdinalIgnoreCase));
 var nativeSafetyMutualAuthArgument = args.FirstOrDefault(argument =>
@@ -46,24 +48,25 @@ var nativeSafetyArgument = args.FirstOrDefault(argument =>
     argument.StartsWith("--miplay-native-safety-probe=", StringComparison.OrdinalIgnoreCase));
 var safetyOfferArgument = args.FirstOrDefault(argument =>
     argument.StartsWith("--miplay-safety-offer=", StringComparison.OrdinalIgnoreCase));
-var safetyProbeArgument = nativeSafetyMutualAuthObserveArgument ?? nativeSafetyMutualAuthArgument ?? nativeSafetyAuthArgument ?? nativeSafetyDecryptArgument ?? nativeSafetyArgument ?? safetyOfferArgument ?? args.FirstOrDefault(argument =>
+var safetyProbeArgument = nativeSafetyMutualAuthHeartbeatArgument ?? nativeSafetyMutualAuthObserveArgument ?? nativeSafetyMutualAuthArgument ?? nativeSafetyAuthArgument ?? nativeSafetyDecryptArgument ?? nativeSafetyArgument ?? safetyOfferArgument ?? args.FirstOrDefault(argument =>
     argument.StartsWith("--miplay-safety-probe=", StringComparison.OrdinalIgnoreCase));
 if (safetyProbeArgument is not null)
 {
     var addressText = safetyProbeArgument[(safetyProbeArgument.IndexOf('=') + 1)..];
     if (!IPAddress.TryParse(addressText, out var deviceAddress) || deviceAddress.AddressFamily != AddressFamily.InterNetwork)
     {
-        throw new ArgumentException("Use --miplay-safety-probe=<device IPv4 address>, --miplay-safety-offer=<device IPv4 address>, --miplay-native-safety-probe=<device IPv4 address>, --miplay-native-safety-decrypt-probe=<device IPv4 address>, --miplay-native-safety-auth-probe=<device IPv4 address>, --miplay-native-safety-mutual-auth-probe=<device IPv4 address>, or --miplay-native-safety-mutual-auth-observe-probe=<device IPv4 address>; for example --miplay-safety-probe=192.168.10.4.");
+        throw new ArgumentException("Use --miplay-safety-probe=<device IPv4 address>, --miplay-safety-offer=<device IPv4 address>, --miplay-native-safety-probe=<device IPv4 address>, --miplay-native-safety-decrypt-probe=<device IPv4 address>, --miplay-native-safety-auth-probe=<device IPv4 address>, --miplay-native-safety-mutual-auth-probe=<device IPv4 address>, --miplay-native-safety-mutual-auth-observe-probe=<device IPv4 address>, or --miplay-native-safety-mutual-auth-heartbeat-probe=<device IPv4 address>; for example --miplay-safety-probe=192.168.10.4.");
     }
 
     await ProbeMiPlayLegacySafetyAsync(
         deviceAddress,
-        sendSafetyInfoOffer: safetyOfferArgument is not null || nativeSafetyArgument is not null || nativeSafetyDecryptArgument is not null || nativeSafetyAuthArgument is not null || nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null,
-        sendNativeBootstrap: nativeSafetyArgument is not null || nativeSafetyDecryptArgument is not null || nativeSafetyAuthArgument is not null || nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null,
-        decryptSafetyAuth: nativeSafetyDecryptArgument is not null || nativeSafetyAuthArgument is not null || nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null,
-        sendSafetyAuthAcknowledgement: nativeSafetyAuthArgument is not null || nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null,
-        sendLocalSafetyAuthChallenge: nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null,
-        observeAfterMutualSafetyAuth: nativeSafetyMutualAuthObserveArgument is not null);
+        sendSafetyInfoOffer: safetyOfferArgument is not null || nativeSafetyArgument is not null || nativeSafetyDecryptArgument is not null || nativeSafetyAuthArgument is not null || nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null || nativeSafetyMutualAuthHeartbeatArgument is not null,
+        sendNativeBootstrap: nativeSafetyArgument is not null || nativeSafetyDecryptArgument is not null || nativeSafetyAuthArgument is not null || nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null || nativeSafetyMutualAuthHeartbeatArgument is not null,
+        decryptSafetyAuth: nativeSafetyDecryptArgument is not null || nativeSafetyAuthArgument is not null || nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null || nativeSafetyMutualAuthHeartbeatArgument is not null,
+        sendSafetyAuthAcknowledgement: nativeSafetyAuthArgument is not null || nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null || nativeSafetyMutualAuthHeartbeatArgument is not null,
+        sendLocalSafetyAuthChallenge: nativeSafetyMutualAuthArgument is not null || nativeSafetyMutualAuthObserveArgument is not null || nativeSafetyMutualAuthHeartbeatArgument is not null,
+        observeAfterMutualSafetyAuth: nativeSafetyMutualAuthObserveArgument is not null || nativeSafetyMutualAuthHeartbeatArgument is not null,
+        sendPostAuthHeartbeat: nativeSafetyMutualAuthHeartbeatArgument is not null);
     return;
 }
 
@@ -74,7 +77,8 @@ static async Task ProbeMiPlayLegacySafetyAsync(
     bool decryptSafetyAuth,
     bool sendSafetyAuthAcknowledgement,
     bool sendLocalSafetyAuthChallenge,
-    bool observeAfterMutualSafetyAuth)
+    bool observeAfterMutualSafetyAuth,
+    bool sendPostAuthHeartbeat)
 {
     using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     using var client = new TcpClient(AddressFamily.InterNetwork);
@@ -147,16 +151,40 @@ static async Task ProbeMiPlayLegacySafetyAsync(
     var sentLocalSafetyAuthChallenge = false;
     var verifiedPeerSafetyAuthAcknowledgement = false;
     var completedMutualSafetyAuth = false;
+    var sentPostAuthHeartbeat = false;
     MiPlaySafetyHashAlgorithm? safetyAuthAlgorithm = null;
     MiPlaySafetyAuthChallenge? localSafetyAuthChallenge = null;
     (string Label, string AuthKey, MiPlaySafetyDataSessionCipher Cipher)? selectedSafetyAuthCandidate = null;
     List<(string Label, string AuthKey, MiPlaySafetyDataSessionCipher Cipher)>? safetyAesCandidates = null;
-    bool ShouldStopAfterMutualSafetyAuth()
+    async Task<bool> CompleteMutualSafetyAuthAsync()
     {
         if (!sendLocalSafetyAuthChallenge ||
             !sentSafetyAuthAcknowledgement ||
             !verifiedPeerSafetyAuthAcknowledgement)
         {
+            return false;
+        }
+
+        if (sendPostAuthHeartbeat)
+        {
+            if (selectedSafetyAuthCandidate is not { } heartbeatCandidate)
+            {
+                Console.WriteLine("Refused post-auth heartbeat: no verified SafetyData session candidate is available.");
+                return true;
+            }
+
+            var heartbeatPayload = heartbeatCandidate.Cipher.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+            var heartbeatSequence = sendNativeBootstrap ? (ushort)4 : (ushort)3;
+            var heartbeatFrame = MiPlayCommandFrameCodec.Encode(
+                MiPlayProtocolConstants.HeartbeatCommand,
+                heartbeatSequence,
+                heartbeatPayload);
+            using var heartbeatSendTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await stream.WriteAsync(heartbeatFrame, heartbeatSendTimeout.Token);
+            await stream.FlushAsync(heartbeatSendTimeout.Token);
+            sentPostAuthHeartbeat = true;
+            completedMutualSafetyAuth = true;
+            Console.WriteLine($"Mutual SafetyAuth completed: local 0x1402 was acknowledged by peer 0x1403, and peer 0x1402 was acknowledged by local 0x1403. Sent one post-auth command=0x{MiPlayProtocolConstants.HeartbeatCommand:X4}, sequence=0x{heartbeatSequence:X4}, encryptedPayloadLength={heartbeatPayload.Length}, candidate={heartbeatCandidate.Label}. The probe will now only observe for 5 seconds; no additional heartbeat, media, RTSP, audio, playback, openDevice, or other control data will be sent.");
             return false;
         }
 
@@ -186,7 +214,25 @@ static async Task ProbeMiPlayLegacySafetyAsync(
             Console.WriteLine($"Observed follow-up command=0x{followUp.Command:X4}, sequence=0x{followUp.Sequence:X4}, payload={Convert.ToHexString(followUp.Payload)}.");
             if (completedMutualSafetyAuth)
             {
-                Console.WriteLine("Post-auth observe-only mode: frame logged; no response or control data will be sent.");
+                if (sentPostAuthHeartbeat && followUp.Command == MiPlayProtocolConstants.HeartbeatAcknowledgementCommand)
+                {
+                    if (selectedSafetyAuthCandidate is { } heartbeatCandidate &&
+                        heartbeatCandidate.Cipher.TryDecryptVersion1(followUp.Payload, out var heartbeatAcknowledgement) &&
+                        heartbeatAcknowledgement is not null &&
+                        heartbeatAcknowledgement.Plaintext.Length == 0)
+                    {
+                        Console.WriteLine($"Verified post-auth command=0x{MiPlayProtocolConstants.HeartbeatAcknowledgementCommand:X4}, sequence=0x{followUp.Sequence:X4}, candidate={heartbeatCandidate.Label}, decryptedPayloadLength=0. No response or control data will be sent.");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Observed post-auth command=0x{MiPlayProtocolConstants.HeartbeatAcknowledgementCommand:X4}, but it did not decode as an empty SafetyData heartbeat acknowledgement. No response or control data will be sent.");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Post-auth observe mode: frame logged; no response or control data will be sent.");
+                }
+
                 continue;
             }
 
@@ -377,7 +423,7 @@ static async Task ProbeMiPlayLegacySafetyAsync(
                 await stream.FlushAsync(safetyAuthSendTimeout.Token);
                 sentSafetyAuthAcknowledgement = true;
                 Console.WriteLine($"Sent command=0x{MiPlayProtocolConstants.SafetyAuthAcknowledgementCommand:X4}, sequence=0x{followUp.Sequence:X4}, encryptedPayloadLength={safetyAuthAcknowledgementData.Length}, candidate={matchedCandidateLabel}. The probe will now only observe for authentication frames; no media, RTSP, audio, playback, or other control data will be sent.");
-                if (ShouldStopAfterMutualSafetyAuth())
+                if (await CompleteMutualSafetyAuthAsync())
                 {
                     return;
                 }
@@ -427,7 +473,7 @@ static async Task ProbeMiPlayLegacySafetyAsync(
 
                 verifiedPeerSafetyAuthAcknowledgement = true;
                 Console.WriteLine($"Verified peer command=0x{MiPlayProtocolConstants.SafetyAuthAcknowledgementCommand:X4}, sequence=0x{followUp.Sequence:X4}, candidate={selectedSafetyAuthCandidate.Value.Label}. This satisfies the native 0x1403 -> DealSafetyDone success precondition locally; no media, RTSP, audio, playback, or other control data will be sent.");
-                if (ShouldStopAfterMutualSafetyAuth())
+                if (await CompleteMutualSafetyAuthAsync())
                 {
                     return;
                 }
@@ -447,7 +493,9 @@ static async Task ProbeMiPlayLegacySafetyAsync(
     }
     catch (OperationCanceledException)
     {
-        var safetyAuthBoundary = completedMutualSafetyAuth
+        var safetyAuthBoundary = completedMutualSafetyAuth && sentPostAuthHeartbeat
+            ? "after mutual SafetyAuth completion and one post-auth 0x001A heartbeat; no further data was sent"
+            : completedMutualSafetyAuth
             ? "after mutual SafetyAuth completion; no post-auth heartbeat, media, RTSP, audio, playback, openDevice, or other control data was sent"
             : sentSafetyAuthAcknowledgement
             ? "after sending one 0x1403 acknowledgement; no further data was sent"
@@ -456,7 +504,9 @@ static async Task ProbeMiPlayLegacySafetyAsync(
     }
     catch (EndOfStreamException)
     {
-        var safetyAuthBoundary = completedMutualSafetyAuth
+        var safetyAuthBoundary = completedMutualSafetyAuth && sentPostAuthHeartbeat
+            ? "after mutual SafetyAuth completion and one post-auth 0x001A heartbeat; no further data was sent"
+            : completedMutualSafetyAuth
             ? "after mutual SafetyAuth completion; no post-auth data was sent"
             : sentSafetyAuthAcknowledgement
             ? "after one 0x1403 acknowledgement"

@@ -432,6 +432,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 - `DLNACast.Probe --miplay-native-safety-auth-probe=<IPv4>`：在同一受限发送边界内，仅当唯一解出 `0x1402 cmd/authMsg` 后发送一次加密 `0x1403` HMAC acknowledgement，随后只观察；它绝不发送媒体、RTSP、播放或其他业务控制数据；
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-probe=<IPv4>`：在同一受限发送边界内，按 native `onRecvCmd` 静态顺序于 `0x1401` 后发送一次本端加密 `0x1402` challenge，只用 verified observed S12 candidate，随后最多回复一次设备 `0x1402` 的加密 `0x1403`，并只校验设备 `0x1403 authMsgAck`；它绝不发送媒体、RTSP、播放或其他业务控制数据；
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-observe-probe=<IPv4>`：发送范围与互验 probe 相同；只有在本端 `0x1402` 与设备 `0x1402` 均完成 `0x1403` HMAC 验证后，继续只读观察一个 5 秒窗口，不发送 post-auth heartbeat、RTSP、音频、播放、openDevice 或其他控制帧；
+- `DLNACast.Probe --miplay-native-safety-mutual-auth-heartbeat-probe=<IPv4>`：发送范围与互验 probe 相同；只有完整互验后，发送一次 SafetyData 加密空 payload 的 `0x001a` heartbeat（当前源端 seq `0x0004`），随后只读观察，不再发送第二次 heartbeat、heartbeat ack、媒体、RTSP、音频、播放、openDevice 或其他控制帧；
 - 覆盖上述离线协议原语的 72 个单元测试（2026-07-19：72/72 通过）。
 
 这些测试验证的是本地字节序、边界条件和解析行为，并不等同于音箱上的认证、播放或端到端延迟验证。
