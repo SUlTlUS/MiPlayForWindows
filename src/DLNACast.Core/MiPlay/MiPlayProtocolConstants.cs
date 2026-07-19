@@ -16,7 +16,9 @@ public static class MiPlayProtocolConstants
 
     // Native post-auth device-info commands reached from CmdSessionControl after CMD_SESSION_INFO_CONNECTED.
     public const ushort GetDeviceInfoCommand = 0x001E;
+    public const ushort GetDeviceInfoAcknowledgementCommand = 0x001F;
     public const ushort SetLocalDeviceInfoCommand = 0x0058;
+    public const ushort SetLocalDeviceInfoAcknowledgementCommand = 0x0059;
 
     // Device-side notify frames observed before SafetyAuth completes; native routes them to onRecvNotify.
     public const ushort NotifyCommand = 0x0022;

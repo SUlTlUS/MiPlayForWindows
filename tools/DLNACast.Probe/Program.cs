@@ -173,10 +173,51 @@ static async Task ProbeMiPlayLegacySafetyAsync(
     var completedMutualSafetyAuth = false;
     ushort? sentPostAuthCommand = null;
     string? sentPostAuthBoundaryDescription = null;
+    ushort? stagedPostAuthGetDeviceInfoSequence = null;
+    bool awaitingPostAuthDeviceInfoAckBeforeLocalDeviceInfo = false;
+    bool sentPostAuthLocalDeviceInfoFrames = false;
     MiPlaySafetyHashAlgorithm? safetyAuthAlgorithm = null;
     MiPlaySafetyAuthChallenge? localSafetyAuthChallenge = null;
     (string Label, string AuthKey, MiPlaySafetyDataSessionCipher Cipher)? selectedSafetyAuthCandidate = null;
     List<(string Label, string AuthKey, MiPlaySafetyDataSessionCipher Cipher)>? safetyAesCandidates = null;
+
+    async Task SendPostAuthLocalDeviceInfoFramesAsync(
+        (byte[] SourceNamePayload, byte[] LocalDeviceInfoPayload, string SourceNameJson, string LocalDeviceInfoJson) localDeviceInfoPayloads,
+        (string Label, string AuthKey, MiPlaySafetyDataSessionCipher Cipher) postAuthCandidate,
+        ushort getDeviceInfoSequence)
+    {
+        if (sentPostAuthLocalDeviceInfoFrames)
+        {
+            Console.WriteLine("Refused duplicate post-auth local device info send: the staged 0x0058 frames were already sent.");
+            return;
+        }
+
+        var sourceNameSequence = checked((ushort)(getDeviceInfoSequence + 1));
+        var localDeviceInfoSequence = checked((ushort)(getDeviceInfoSequence + 2));
+        var sourceNamePayload = postAuthCandidate.Cipher.EncryptVersion1(localDeviceInfoPayloads.SourceNamePayload);
+        var localDeviceInfoPayload = postAuthCandidate.Cipher.EncryptVersion1(localDeviceInfoPayloads.LocalDeviceInfoPayload);
+        var sourceNameFrame = MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.SetLocalDeviceInfoCommand,
+            sourceNameSequence,
+            sourceNamePayload);
+        var localDeviceInfoFrame = MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.SetLocalDeviceInfoCommand,
+            localDeviceInfoSequence,
+            localDeviceInfoPayload);
+
+        using var postAuthSendTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await stream.WriteAsync(sourceNameFrame, postAuthSendTimeout.Token);
+        await stream.FlushAsync(postAuthSendTimeout.Token);
+        await stream.WriteAsync(localDeviceInfoFrame, postAuthSendTimeout.Token);
+        await stream.FlushAsync(postAuthSendTimeout.Token);
+
+        sentPostAuthCommand = MiPlayProtocolConstants.SetLocalDeviceInfoCommand;
+        sentPostAuthBoundaryDescription = "post-auth 0x001e getDeviceInfo acknowledged by 0x001f, then two 0x0058 setLocalDeviceInfo frames";
+        awaitingPostAuthDeviceInfoAckBeforeLocalDeviceInfo = false;
+        sentPostAuthLocalDeviceInfoFrames = true;
+        Console.WriteLine($"Verified 0x{MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand:X4} getDeviceInfo acknowledgement, then sent staged local device info candidate={postAuthCandidate.Label}: command=0x{MiPlayProtocolConstants.SetLocalDeviceInfoCommand:X4}, sequence=0x{sourceNameSequence:X4}, encryptedPayloadLength={sourceNamePayload.Length}, plaintextJson={JsonSerializer.Serialize(localDeviceInfoPayloads.SourceNameJson)}; command=0x{MiPlayProtocolConstants.SetLocalDeviceInfoCommand:X4}, sequence=0x{localDeviceInfoSequence:X4}, encryptedPayloadLength={localDeviceInfoPayload.Length}, plaintextJson={JsonSerializer.Serialize(localDeviceInfoPayloads.LocalDeviceInfoJson)}. The probe will now only observe; no additional getDeviceInfo, setLocalDeviceInfo, heartbeat, media, RTSP, audio, playback, openDevice, or other control data will be sent.");
+    }
+
     async Task<bool> CompleteMutualSafetyAuthAsync()
     {
         if (!sendLocalSafetyAuthChallenge ||
@@ -186,7 +227,7 @@ static async Task ProbeMiPlayLegacySafetyAsync(
             return false;
         }
 
-        if (postAuthLocalDeviceInfoPayloads is { } localDeviceInfoPayloads)
+        if (postAuthLocalDeviceInfoPayloads is { })
         {
             if (selectedSafetyAuthCandidate is not { } postAuthCandidate)
             {
@@ -195,36 +236,22 @@ static async Task ProbeMiPlayLegacySafetyAsync(
             }
 
             var getDeviceInfoSequence = sendNativeBootstrap ? (ushort)4 : (ushort)3;
-            var sourceNameSequence = checked((ushort)(getDeviceInfoSequence + 1));
-            var localDeviceInfoSequence = checked((ushort)(getDeviceInfoSequence + 2));
             var getDeviceInfoPayload = postAuthCandidate.Cipher.EncryptVersion1(ReadOnlySpan<byte>.Empty);
-            var sourceNamePayload = postAuthCandidate.Cipher.EncryptVersion1(localDeviceInfoPayloads.SourceNamePayload);
-            var localDeviceInfoPayload = postAuthCandidate.Cipher.EncryptVersion1(localDeviceInfoPayloads.LocalDeviceInfoPayload);
             var getDeviceInfoFrame = MiPlayCommandFrameCodec.Encode(
                 MiPlayProtocolConstants.GetDeviceInfoCommand,
                 getDeviceInfoSequence,
                 getDeviceInfoPayload);
-            var sourceNameFrame = MiPlayCommandFrameCodec.Encode(
-                MiPlayProtocolConstants.SetLocalDeviceInfoCommand,
-                sourceNameSequence,
-                sourceNamePayload);
-            var localDeviceInfoFrame = MiPlayCommandFrameCodec.Encode(
-                MiPlayProtocolConstants.SetLocalDeviceInfoCommand,
-                localDeviceInfoSequence,
-                localDeviceInfoPayload);
 
             using var postAuthSendTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             await stream.WriteAsync(getDeviceInfoFrame, postAuthSendTimeout.Token);
             await stream.FlushAsync(postAuthSendTimeout.Token);
-            await stream.WriteAsync(sourceNameFrame, postAuthSendTimeout.Token);
-            await stream.FlushAsync(postAuthSendTimeout.Token);
-            await stream.WriteAsync(localDeviceInfoFrame, postAuthSendTimeout.Token);
-            await stream.FlushAsync(postAuthSendTimeout.Token);
 
-            sentPostAuthCommand = MiPlayProtocolConstants.SetLocalDeviceInfoCommand;
-            sentPostAuthBoundaryDescription = "post-auth 0x001e getDeviceInfo plus two 0x0058 setLocalDeviceInfo frames";
+            sentPostAuthCommand = MiPlayProtocolConstants.GetDeviceInfoCommand;
+            sentPostAuthBoundaryDescription = "post-auth 0x001e getDeviceInfo staged before local device info";
+            stagedPostAuthGetDeviceInfoSequence = getDeviceInfoSequence;
+            awaitingPostAuthDeviceInfoAckBeforeLocalDeviceInfo = true;
             completedMutualSafetyAuth = true;
-            Console.WriteLine($"Mutual SafetyAuth completed: local 0x1402 was acknowledged by peer 0x1403, and peer 0x1402 was acknowledged by local 0x1403. Sent post-auth sequence candidate={postAuthCandidate.Label}: command=0x{MiPlayProtocolConstants.GetDeviceInfoCommand:X4}, sequence=0x{getDeviceInfoSequence:X4}, encryptedPayloadLength={getDeviceInfoPayload.Length}, plaintextLength=0; command=0x{MiPlayProtocolConstants.SetLocalDeviceInfoCommand:X4}, sequence=0x{sourceNameSequence:X4}, encryptedPayloadLength={sourceNamePayload.Length}, plaintextJson={JsonSerializer.Serialize(localDeviceInfoPayloads.SourceNameJson)}; command=0x{MiPlayProtocolConstants.SetLocalDeviceInfoCommand:X4}, sequence=0x{localDeviceInfoSequence:X4}, encryptedPayloadLength={localDeviceInfoPayload.Length}, plaintextJson={JsonSerializer.Serialize(localDeviceInfoPayloads.LocalDeviceInfoJson)}. The probe will now only observe for 5 seconds; no additional getDeviceInfo, setLocalDeviceInfo, heartbeat, media, RTSP, audio, playback, openDevice, or other control data will be sent.");
+            Console.WriteLine($"Mutual SafetyAuth completed: local 0x1402 was acknowledged by peer 0x1403, and peer 0x1402 was acknowledged by local 0x1403. Sent staged post-auth getDeviceInfo candidate={postAuthCandidate.Label}: command=0x{MiPlayProtocolConstants.GetDeviceInfoCommand:X4}, sequence=0x{getDeviceInfoSequence:X4}, encryptedPayloadLength={getDeviceInfoPayload.Length}, plaintextLength=0. The probe will send the two 0x{MiPlayProtocolConstants.SetLocalDeviceInfoCommand:X4} setLocalDeviceInfo frames only if it observes a decrypted 0x{MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand:X4} getDeviceInfo acknowledgement; no heartbeat, media, RTSP, audio, playback, openDevice, or other control data will be sent.");
             return false;
         }
 
@@ -301,7 +328,31 @@ static async Task ProbeMiPlayLegacySafetyAsync(
                         utf8Preview = utf8Preview[..256] + "...";
                     }
 
-                    if (sentPostAuthCommand == MiPlayProtocolConstants.HeartbeatCommand &&
+                    if (followUp.Command == MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand)
+                    {
+                        Console.WriteLine($"Verified native post-auth getDeviceInfo acknowledgement command=0x{MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand:X4}, sequence=0x{followUp.Sequence:X4}, candidate={postAuthCandidate.Label}, decryptedPayloadLength={plaintext.Length}, plaintextHex={Convert.ToHexString(plaintext)}, plaintextUtf8Preview={JsonSerializer.Serialize(utf8Preview)}. Native static evidence maps this command to onCmdSessionDeviceInfoAck(byte[]).");
+                        if (awaitingPostAuthDeviceInfoAckBeforeLocalDeviceInfo &&
+                            postAuthLocalDeviceInfoPayloads is { } stagedLocalDeviceInfoPayloads &&
+                            stagedPostAuthGetDeviceInfoSequence is { } getDeviceInfoSequence)
+                        {
+                            if (followUp.Sequence == getDeviceInfoSequence)
+                            {
+                                await SendPostAuthLocalDeviceInfoFramesAsync(
+                                    stagedLocalDeviceInfoPayloads,
+                                    postAuthCandidate,
+                                    getDeviceInfoSequence);
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Refused staged local device info send: 0x{MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand:X4} sequence 0x{followUp.Sequence:X4} did not match pending 0x{MiPlayProtocolConstants.GetDeviceInfoCommand:X4} sequence 0x{getDeviceInfoSequence:X4}. No response or control data will be sent.");
+                            }
+                        }
+                    }
+                    else if (followUp.Command == MiPlayProtocolConstants.SetLocalDeviceInfoAcknowledgementCommand)
+                    {
+                        Console.WriteLine($"Verified native post-auth setLocalDeviceInfo acknowledgement command=0x{MiPlayProtocolConstants.SetLocalDeviceInfoAcknowledgementCommand:X4}, sequence=0x{followUp.Sequence:X4}, candidate={postAuthCandidate.Label}, decryptedPayloadLength={plaintext.Length}, plaintextHex={Convert.ToHexString(plaintext)}, plaintextUtf8Preview={JsonSerializer.Serialize(utf8Preview)}. Native static evidence maps this command to CMD_SESSION_INFO_SET_DEVICEINFO_ACK; the probe sends no response.");
+                    }
+                    else if (sentPostAuthCommand == MiPlayProtocolConstants.HeartbeatCommand &&
                         followUp.Command == MiPlayProtocolConstants.HeartbeatAcknowledgementCommand &&
                         plaintext.Length == 0)
                     {

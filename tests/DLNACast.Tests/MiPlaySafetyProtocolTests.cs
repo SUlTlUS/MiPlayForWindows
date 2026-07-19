@@ -181,6 +181,19 @@ public sealed class MiPlaySafetyProtocolTests
     }
 
     [Fact]
+    public void PostAuthDeviceInfoAcknowledgementCommandsMatchNativeJumpTable()
+    {
+        Assert.Equal(0x001F, MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand);
+        Assert.Equal(
+            checked((ushort)(MiPlayProtocolConstants.GetDeviceInfoCommand + 1)),
+            MiPlayProtocolConstants.GetDeviceInfoAcknowledgementCommand);
+        Assert.Equal(0x0059, MiPlayProtocolConstants.SetLocalDeviceInfoAcknowledgementCommand);
+        Assert.Equal(
+            checked((ushort)(MiPlayProtocolConstants.SetLocalDeviceInfoCommand + 1)),
+            MiPlayProtocolConstants.SetLocalDeviceInfoAcknowledgementCommand);
+    }
+
+    [Fact]
     public void TcpSessionInfoDerivesType1KeyWithPeerBeforeLocalOrdering()
     {
         var session = new MiPlayTcpSessionInfo(
