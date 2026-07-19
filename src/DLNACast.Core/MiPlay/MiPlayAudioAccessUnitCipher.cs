@@ -5,10 +5,10 @@ namespace DLNACast.Core.MiPlay;
 public sealed record MiPlayEncryptedAccessUnit(byte[] StartingIv, byte[] Payload);
 
 /// <summary>
-/// Offline AES-CBC helper for the MiPlay audio access-unit encryption shape.
-/// Complete 16-byte blocks are encrypted, any tail shorter than one block remains
+/// Offline AES-CBC helper for the MiPlay audio access-unit encryption/decryption shape.
+/// Complete 16-byte blocks are transformed, any tail shorter than one block remains
 /// clear, and no SafetyData header, RTP, MPEG-TS, socket, or pacing behaviour is
-/// performed here.
+/// performed here. Create one instance per CBC stream direction.
 /// </summary>
 public sealed class MiPlayAudioAccessUnitCipher
 {
@@ -57,5 +57,33 @@ public sealed class MiPlayAudioAccessUnitCipher
 
         encrypted.AsSpan(encryptableLength - AesBlockLength, AesBlockLength).CopyTo(nextIv);
         return new MiPlayEncryptedAccessUnit(startingIv, encrypted);
+    }
+
+    public byte[] Decrypt(ReadOnlySpan<byte> encryptedAccessUnit)
+    {
+        var decrypted = encryptedAccessUnit.ToArray();
+        var decryptableLength = encryptedAccessUnit.Length - encryptedAccessUnit.Length % AesBlockLength;
+        if (decryptableLength == 0)
+        {
+            return decrypted;
+        }
+
+        var nextDecryptIv = decrypted.AsSpan(decryptableLength - AesBlockLength, AesBlockLength).ToArray();
+
+        using var aes = Aes.Create();
+        aes.Mode = CipherMode.CBC;
+        aes.Padding = PaddingMode.None;
+        aes.Key = aesKey;
+        aes.IV = nextIv;
+
+        using var decryptor = aes.CreateDecryptor();
+        var written = decryptor.TransformBlock(decrypted, 0, decryptableLength, decrypted, 0);
+        if (written != decryptableLength)
+        {
+            throw new CryptographicException("Unexpected AES-CBC output length while decrypting MiPlay audio.");
+        }
+
+        nextDecryptIv.CopyTo(nextIv);
+        return decrypted;
     }
 }

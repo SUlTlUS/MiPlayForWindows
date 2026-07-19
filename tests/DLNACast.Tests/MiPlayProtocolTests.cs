@@ -243,6 +243,34 @@ public sealed class MiPlayProtocolTests
 
         Assert.Equal(Convert.FromHexString("DD49775189678FA9032C86208E7D974F"), secondEncrypted.StartingIv);
         Assert.Equal(Convert.FromHexString("068DC3752C49BB18029BA8A37FA4E17F"), secondEncrypted.Payload);
+
+        var decryptor = new MiPlayAudioAccessUnitCipher(key, iv);
+        Assert.Equal(accessUnit, decryptor.Decrypt(encrypted.Payload));
+        Assert.Equal(secondAccessUnit, decryptor.Decrypt(secondEncrypted.Payload));
+    }
+
+    [Fact]
+    public void AudioAccessUnitCipherLeavesSubBlockPayloadsClearAndDoesNotAdvanceIv()
+    {
+        var key = Enumerable.Range(0, 16).Select(value => (byte)value).ToArray();
+        var iv = Enumerable.Range(16, 16).Select(value => (byte)value).ToArray();
+        var shortAccessUnit = Enumerable.Range(0, 15).Select(value => (byte)(0x20 + value)).ToArray();
+        var fullBlockAccessUnit = Enumerable.Range(0, 16).Select(value => (byte)(0x40 + value)).ToArray();
+        var cipher = new MiPlayAudioAccessUnitCipher(key, iv);
+
+        var shortEncrypted = cipher.Encrypt(shortAccessUnit);
+        var afterShortEncrypted = cipher.Encrypt(fullBlockAccessUnit);
+        var resetCipher = new MiPlayAudioAccessUnitCipher(key, iv);
+        var resetEncrypted = resetCipher.Encrypt(fullBlockAccessUnit);
+
+        Assert.Equal(iv, shortEncrypted.StartingIv);
+        Assert.Equal(shortAccessUnit, shortEncrypted.Payload);
+        Assert.Equal(resetEncrypted.StartingIv, afterShortEncrypted.StartingIv);
+        Assert.Equal(resetEncrypted.Payload, afterShortEncrypted.Payload);
+
+        var decryptor = new MiPlayAudioAccessUnitCipher(key, iv);
+        Assert.Equal(shortAccessUnit, decryptor.Decrypt(shortEncrypted.Payload));
+        Assert.Equal(fullBlockAccessUnit, decryptor.Decrypt(afterShortEncrypted.Payload));
     }
 
     [Fact]
