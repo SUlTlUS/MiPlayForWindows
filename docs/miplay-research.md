@@ -501,6 +501,8 @@ MPT/KCP 参数为 conv `0x1234`、MTU 1400、发送/接收窗口 256、10 ms 更
 
 音频路径为 `AAC/ADTS → MPEG-TS → RTP → UDP/TCP/MPT(KCP)`：48 kHz、16-bit、双声道、256 kbps AAC-LC；每个访问单元有 7 字节 MPEG-2 ADTS 头；RTP 使用 MPEG-TS payload type 33。默认最大 RTP 包为 1472 字节，即 12 字节 RTP 头后最多 7 个 188 字节 TS 包。样本的主动播放缓冲为 5 GHz 下 0.8 秒、其他网络下 1.0 秒；这是该实现的策略，不能当作协议硬下限。
 
+新增的 `MiPlayRtpPacketCodec` 只离线写入 RTP v2 固定头：payload type `33`、u16 big-endian sequence、u32 big-endian timestamp、u32 big-endian SSRC，并要求 payload 是 1–7 个完整 188 字节 MPEG-TS 包。timestamp 递增策略、MPEG-TS PES/section 打包、UDP/TCP/MPT 发送、节奏控制和真实音频数据仍未实现，且不会在认证后控制边界未闭环前进入真机 probe。
+
 Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机的 16 字节 ASCII 文本，并通过受信任控制通路同步。AES 在 MPEG-TS 之前对 AAC/ADTS 数据的完整 16 字节块执行 CBC；尾部不足 16 字节的数据不加密，访问单元携带加密前的 IV。缺少可信通道时，单独复刻 RTP/TS/KCP 不能完成可用投送。
 
 ## 工程实现与验证范围
@@ -509,7 +511,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 
 - `_mi-connect._udp.local` 发现及 `appsData` 多应用容器解析；
 - 旧式 `$` 控制帧的编码/解码和长度校验；
-- `OpenDevice` 载荷、认证后 SafetyData 封装、RTSP 请求/响应诊断原语、会话随机材料和诊断辅助；
+- `OpenDevice` 载荷、认证后 SafetyData 封装、RTSP 请求/响应诊断原语、RTP/MPEG-TS payload 边界原语、会话随机材料和诊断辅助；
 - 已确认旧式 `0x0028`/`0x0029` 挑战应答、`0x0036`/`0x0037` 版本帧、OPack 安全内层、`SafetyInfo` offer/ack JSON、`SafetyAuth` JSON/HMAC、Lyra 四字段 secret JSON、非 Lyra TCP `SessionInfo` 端点顺序，以及类型 1/2 `SafetyKeyDeal` 材料选择的纯离线实现；
 - `DLNACast.Probe --miplay-safety-probe=<IPv4>`：显式真机实验入口，只允许一次经过命令号校验的 `0x0028`/`0x0029` 往返与有限观察；
 - `DLNACast.Probe --miplay-safety-offer=<IPv4>`：在完成上述受限旧式挑战应答后，额外发送一次精确的原生默认 `0x1400` offer，并只记录后续帧；它绝不发送 `0x1403`、媒体或未知控制数据；

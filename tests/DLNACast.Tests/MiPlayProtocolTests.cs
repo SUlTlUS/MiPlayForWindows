@@ -287,6 +287,44 @@ public sealed class MiPlayProtocolTests
     }
 
     [Fact]
+    public void RtpPacketWrapsCompleteMpegTsPayloadWithPayloadTypeThirtyThree()
+    {
+        var payload = Enumerable.Range(0, MiPlayProtocolConstants.MpegTsPacketLength * 2)
+            .Select(value => (byte)value)
+            .ToArray();
+
+        var packet = MiPlayRtpPacketCodec.EncodeMpegTsPayload(
+            sequenceNumber: 0x1234,
+            timestamp: 0x01020304,
+            synchronizationSource: 0xA0B0C0D0,
+            payload,
+            marker: true);
+
+        Assert.Equal(MiPlayProtocolConstants.RtpHeaderLength + payload.Length, packet.Length);
+        Assert.Equal(0x80, packet[0]);
+        Assert.Equal(0x80 | MiPlayProtocolConstants.MpegTsRtpPayloadType, packet[1]);
+        Assert.Equal(0x1234, BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(2, 2)));
+        Assert.Equal(0x01020304u, BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(4, 4)));
+        Assert.Equal(0xA0B0C0D0u, BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(8, 4)));
+        Assert.Equal(payload, packet[MiPlayProtocolConstants.RtpHeaderLength..]);
+    }
+
+    [Fact]
+    public void RtpPacketRejectsPartialOrOversizedMpegTsPayloads()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => MiPlayRtpPacketCodec.EncodeMpegTsPayload(
+            sequenceNumber: 1,
+            timestamp: 2,
+            synchronizationSource: 3,
+            [0]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => MiPlayRtpPacketCodec.EncodeMpegTsPayload(
+            sequenceNumber: 1,
+            timestamp: 2,
+            synchronizationSource: 3,
+            new byte[MiPlayRtpPacketCodec.MaximumMpegTsPayloadLength + MiPlayProtocolConstants.MpegTsPacketLength]));
+    }
+
+    [Fact]
     public void EncodesKnownMiPlayAudioReadTargetAsProtobuf()
     {
         var targetId = MiPlayCoapMessage.CreateTargetId(
