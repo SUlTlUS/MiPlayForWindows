@@ -598,6 +598,40 @@ public sealed class MiPlaySafetyProtocolTests
     }
 
     [Fact]
+    public void SafetyDataSessionCipherDoesNotAdvanceInboundCbcStateAfterFailedDecrypt()
+    {
+        var key = Encoding.ASCII.GetBytes("0123456789abcdef");
+        var iv = Encoding.ASCII.GetBytes("fedcba9876543210");
+        var firstPlaintext = MiPlaySafetyEnvelopeCodec.Encode(
+            isAcknowledgement: false,
+            MiPlayProtocolConstants.SafetyValueType,
+            MiPlaySafetyAuthCodec.CreateChallenge(123_456_789).ToJsonPayload());
+        var secondPlaintext = MiPlaySafetyEnvelopeCodec.Encode(
+            isAcknowledgement: true,
+            MiPlayProtocolConstants.SafetyValueType,
+            new MiPlaySafetyAuthAcknowledgement("0123456789abcdef0123456789abcdef").ToJsonPayload());
+        var sender = new MiPlaySafetyDataSessionCipher(key, iv);
+        var firstFrameData = sender.EncryptVersion1(firstPlaintext);
+        var secondFrameData = sender.EncryptVersion1(secondPlaintext);
+        var corruptedSecondFrameData = secondFrameData.ToArray();
+        corruptedSecondFrameData[^1] ^= 0x80;
+        var corruptedCiphertext = corruptedSecondFrameData.AsSpan(9);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            corruptedSecondFrameData.AsSpan(5, sizeof(uint)),
+            MiPlaySafetyDataCodec.ComputeCrc32Mpeg2(corruptedCiphertext));
+
+        var receiver = new MiPlaySafetyDataSessionCipher(key, iv);
+
+        Assert.True(receiver.TryDecryptVersion1(firstFrameData, out var firstDecoded));
+        Assert.NotNull(firstDecoded);
+        Assert.Equal(firstPlaintext, firstDecoded.Plaintext);
+        Assert.False(receiver.TryDecryptVersion1(corruptedSecondFrameData, out var corruptedDecoded));
+        Assert.Null(corruptedDecoded);
+        Assert.True(receiver.TryDecryptVersion1(secondFrameData, out var secondDecoded));
+        Assert.NotNull(secondDecoded);
+        Assert.Equal(secondPlaintext, secondDecoded.Plaintext);
+    }
+    [Fact]
     public void SafetyAuthMutualExchangeRequiresLocalChallengeAcknowledgementToo()
     {
         var authKey = "d24264ef9bb7ddf04a6062358fc7849e";
