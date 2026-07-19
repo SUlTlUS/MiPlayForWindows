@@ -248,6 +248,21 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 
 结论：SafetyAuth 互验现在已在两台 S12（`192.168.10.4` / `192.168.10.7`）上重复验证，且本地完成条件与 native `0x1403 -> DealSafetyDone` 静态路径一致。两台设备在认证完成后、源端保持静默时都会关闭 8899/TCP；这支持下一步优先静态闭环 keepalive/reaper 或第一个无媒体 post-auth 控制入口，而不是直接进入媒体、RTSP 或播放。
 
+#### 2026-07-19 单次 post-auth heartbeat 真机验证
+
+在静态确认 `what=7 -> sendHeartBeat() -> sendCmdPayload(0x001a, empty)` 且离线单测固定 SafetyData 空 payload 后，新增 `--miplay-native-safety-mutual-auth-heartbeat-probe=<IPv4>` 并对单台 `192.168.10.4` 执行一次受限实机测试。发送边界为：完整 SafetyAuth 互验成功后，只额外发送一次 SafetyData 加密空 payload 的 `0x001a` heartbeat；随后只读观察，不发送第二次 heartbeat、`0x001b` ack、RTSP、音频、播放、openDevice 或其他业务控制帧。
+
+| 项目 | 结果 |
+| --- | --- |
+| TCP 端点 | local `192.168.10.9:1915`，peer `192.168.10.4:8899` |
+| 前置认证 | `0x0036` / `0x0029` / `0x1400` / 本端加密 `0x1402` / 本端加密 `0x1403` 均按互验 probe 成功完成 |
+| 设备 acknowledgement | 收到 `0x1403` seq `0x0003`，解成 OPack `ack/authMsgAck`，HMAC 校验通过 |
+| post-auth heartbeat | 发送 `0x001a` seq `0x0004`，SafetyData 加密 payload 长度 `25`，candidate `peer-first:observed-s12-inbound-iv-type1` |
+| 设备后续行为 | 未返回 `0x001b` 或其他 post-auth command；设备主动关闭 TCP。累计 follow-up frame 数仍为 `7` |
+| 发送边界 | `0x001a` 后没有发送任何数据；日志明确记录 `no further data was sent` |
+
+结论：单次 SafetyData 加密 `0x001a` heartbeat 的帧结构已被实现并实机发送，但它本身没有让 S12 维持 8899/TCP，也没有得到可验证的 `0x001b` ack。后续不应把 heartbeat 当作认证后最小可用控制面；更可能缺的是 native listener 的 `DealSafetyDone` 上层回调后动作、正确时序，或第一个真正的无媒体状态/会话控制入口。
+
 ### OPack 内层封装
 
 现代通路不是把 JSON 直接放进旧式帧。`sendCmdData2`（`0x17b998`）先构造 OPack 内层；`OPackBuf::packString` 已确认只复制原始字符串字节，**不**额外写入长度。因此首字节是标签文本自身的单字节长度：
@@ -442,7 +457,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 1. `0x1401 result="0"` 在两台 S12 上会继续进入 `0x1402`，但 result 值本身的命名语义、各固件差异，以及其他可接受组合仍未知；
 2. `authKeyTypes`、`authAlgorithmTypes`、`integrityTypes`、`aesKeyTypes`、`aesIvTypes` 的位/枚举语义，以及设备实际可接受的组合；
 3. 完整 SafetyAuth 互验已在 `192.168.10.4` 上通过：本端 `0x1402` 得到设备 `0x1403 authMsgAck` HMAC 验证，本端也已回复设备 `0x1402`；只读观察显示源端认证后保持静默时设备会主动关闭 8899/TCP；
-4. 该验证仍只覆盖认证层；认证后的 keepalive/reaper 真机行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
+4. 该验证仍只覆盖认证层；单次 `0x001a` heartbeat 未得到 `0x001b` ack，认证后的 listener/onConnected 上层动作、keepalive/reaper 完整行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
 5. 非 Xiaomi 系统如何建立 Continuity/Lyra 所需的受信任身份、设备确认和会话密钥同步；
 6. 在不破坏现有播放会话的前提下，用单台测试音箱验证完整认证、回连、媒体协商与实际延迟。
 
