@@ -14,6 +14,10 @@ public static class MiPlayProtocolConstants
     public const ushort HeartbeatCommand = 0x001A;
     public const ushort HeartbeatAcknowledgementCommand = 0x001B;
 
+    // Native post-auth device-info commands reached from CmdSessionControl after CMD_SESSION_INFO_CONNECTED.
+    public const ushort GetDeviceInfoCommand = 0x001E;
+    public const ushort SetLocalDeviceInfoCommand = 0x0058;
+
     // Legacy challenge/response that precedes the modern SafetyInfo exchange.
     public const ushort LegacySafetyChallengeCommand = 0x0028;
     public const ushort LegacySafetyAcknowledgementCommand = 0x0029;

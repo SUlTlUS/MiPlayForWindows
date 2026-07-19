@@ -739,6 +739,41 @@ public sealed class MiPlaySafetyProtocolTests
     }
 
     [Fact]
+    public void PostAuthGetDeviceInfoUsesEncryptedEmptyPayloadAndSessionCbcState()
+    {
+        var key = Encoding.ASCII.GetBytes("0123456789abcdef");
+        var iv = Encoding.ASCII.GetBytes("fedcba9876543210");
+        var sender = new MiPlaySafetyDataSessionCipher(key, iv);
+
+        var previousSafetyData = sender.EncryptVersion1("previous-auth-frame"u8);
+        var getDeviceInfoSafetyData = sender.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+
+        Assert.Equal(25, getDeviceInfoSafetyData.Length);
+        Assert.Equal((byte)16, getDeviceInfoSafetyData[4]);
+        Assert.NotEqual(
+            MiPlaySafetyDataCodec.EncryptVersion1(ReadOnlySpan<byte>.Empty, key, iv),
+            getDeviceInfoSafetyData);
+
+        var getDeviceInfoFrame = MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.GetDeviceInfoCommand,
+            sequence: 4,
+            getDeviceInfoSafetyData);
+        Assert.True(MiPlayCommandFrameCodec.TryDecode(getDeviceInfoFrame, out var decodedFrame, out var bytesConsumed));
+        Assert.NotNull(decodedFrame);
+        Assert.Equal(getDeviceInfoFrame.Length, bytesConsumed);
+        Assert.Equal(MiPlayProtocolConstants.GetDeviceInfoCommand, decodedFrame.Command);
+        Assert.Equal((ushort)4, decodedFrame.Sequence);
+        Assert.Equal(getDeviceInfoSafetyData, decodedFrame.Payload);
+
+        var receiver = new MiPlaySafetyDataSessionCipher(key, iv);
+        Assert.True(receiver.TryDecryptVersion1(previousSafetyData, out var previousDecoded));
+        Assert.NotNull(previousDecoded);
+        Assert.Equal("previous-auth-frame"u8.ToArray(), previousDecoded.Plaintext);
+        Assert.True(receiver.TryDecryptVersion1(getDeviceInfoSafetyData, out var getDeviceInfoDecoded));
+        Assert.NotNull(getDeviceInfoDecoded);
+        Assert.Empty(getDeviceInfoDecoded.Plaintext);
+    }
+    [Fact]
     public void LegacySafetyChallengeProducesTheVerifiedResponseFrame()
     {
         var challengeFrame = MiPlayCommandFrameCodec.Encode(
