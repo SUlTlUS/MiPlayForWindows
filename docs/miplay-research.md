@@ -505,13 +505,15 @@ MPT/KCP 参数为 conv `0x1234`、MTU 1400、发送/接收窗口 256、10 ms 更
 
 Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机的 16 字节 ASCII 文本，并通过受信任控制通路同步。AES 在 MPEG-TS 之前对 AAC/ADTS 数据的完整 16 字节块执行 CBC；尾部不足 16 字节的数据不加密，访问单元携带加密前的 IV。缺少可信通道时，单独复刻 RTP/TS/KCP 不能完成可用投送。
 
+新增的 `MiPlayAudioAccessUnitCipher` 只离线复刻上述 access-unit 加密形态：调用方显式提供受信任通道取得的 16 字节 `streamKey` / `streamIV`，helper 返回本次 access unit 的起始 IV 与加密后 payload，并把下一次 IV 链接到最后一个完整密文块；如果 access unit 不足 16 字节则 payload 原样返回且 IV 不推进。它不生成、发现、传输或记录真实密钥，也不打包 MPEG-TS/RTP 或发送媒体。
+
 ## 工程实现与验证范围
 
 当前实验代码已包含：
 
 - `_mi-connect._udp.local` 发现及 `appsData` 多应用容器解析；
 - 旧式 `$` 控制帧的编码/解码和长度校验；
-- `OpenDevice` 载荷、认证后 SafetyData 封装、RTSP 请求/响应诊断原语、RTP/MPEG-TS payload 边界原语、会话随机材料和诊断辅助；
+- `OpenDevice` 载荷、认证后 SafetyData 封装、RTSP 请求/响应诊断原语、RTP/MPEG-TS payload 边界原语、AAC access-unit 块加密原语、会话随机材料和诊断辅助；
 - 已确认旧式 `0x0028`/`0x0029` 挑战应答、`0x0036`/`0x0037` 版本帧、OPack 安全内层、`SafetyInfo` offer/ack JSON、`SafetyAuth` JSON/HMAC、Lyra 四字段 secret JSON、非 Lyra TCP `SessionInfo` 端点顺序，以及类型 1/2 `SafetyKeyDeal` 材料选择的纯离线实现；
 - `DLNACast.Probe --miplay-safety-probe=<IPv4>`：显式真机实验入口，只允许一次经过命令号校验的 `0x0028`/`0x0029` 往返与有限观察；
 - `DLNACast.Probe --miplay-safety-offer=<IPv4>`：在完成上述受限旧式挑战应答后，额外发送一次精确的原生默认 `0x1400` offer，并只记录后续帧；它绝不发送 `0x1403`、媒体或未知控制数据；

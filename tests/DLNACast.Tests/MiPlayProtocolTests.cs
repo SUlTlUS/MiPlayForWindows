@@ -223,6 +223,29 @@ public sealed class MiPlayProtocolTests
     }
 
     [Fact]
+    public void AudioAccessUnitCipherEncryptsCompleteBlocksOnlyAndChainsIv()
+    {
+        var key = Enumerable.Range(0, 16).Select(value => (byte)value).ToArray();
+        var iv = Enumerable.Range(16, 16).Select(value => (byte)value).ToArray();
+        var accessUnit = Enumerable.Range(0, 37).Select(value => (byte)(0xA0 + value)).ToArray();
+        var cipher = new MiPlayAudioAccessUnitCipher(key, iv);
+
+        var encrypted = cipher.Encrypt(accessUnit);
+
+        Assert.Equal(iv, encrypted.StartingIv);
+        Assert.Equal(
+            Convert.FromHexString("67896C75BA00597BAE4779270EF2B108DD49775189678FA9032C86208E7D974FC0C1C2C3C4"),
+            encrypted.Payload);
+        Assert.Equal(accessUnit[32..], encrypted.Payload[32..]);
+
+        var secondAccessUnit = Enumerable.Range(0, 16).Select(value => (byte)(0x40 + value)).ToArray();
+        var secondEncrypted = cipher.Encrypt(secondAccessUnit);
+
+        Assert.Equal(Convert.FromHexString("DD49775189678FA9032C86208E7D974F"), secondEncrypted.StartingIv);
+        Assert.Equal(Convert.FromHexString("068DC3752C49BB18029BA8A37FA4E17F"), secondEncrypted.Payload);
+    }
+
+    [Fact]
     public void PlaybackDelayConstantsAreExpressedInMicroseconds()
     {
         Assert.Equal(TimeSpan.FromMilliseconds(800), TimeSpan.FromMicroseconds(MiPlayProtocolConstants.FiveGigahertzPlaybackDelayMicroseconds));
