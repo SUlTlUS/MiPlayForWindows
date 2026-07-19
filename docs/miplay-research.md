@@ -386,6 +386,8 @@ tagLength (u8) | tag UTF-8 bytes | valueType (u8) | payloadLength (u32 big-endia
 {"wlan0ip":"<sender-ip>","authKey":"<secret>","streamKey":"<secret>","streamIV":"<secret>"}
 ```
 
+`ProtocolSession.getKey(...)` 的静态实现会调用 `UUID.randomUUID().toString().replaceAll("-", "")`，再复制 UTF-8 前 16 字节；因此这三项是 16 个小写 hex 字符，并保留 UUID v4 的版本位（第 13 个字符为 `4`）。本地 `MiPlaySessionKeys.Generate()` 只在离线建模时复刻这个生成形态，不代表已经取得 Lyra/Continuity 信任通道。
+
 原生 `CmdSource::setLyraInfo` 对四项均要求存在且为 JSON 字符串；随后把 `authKey`、`streamKey`、`streamIV` 保存到 `CmdSource` 的 `+0x360`、`+0x378`、`+0x390`。在实际 `onSessionConnect` 后，它们被复制到 `SafetyKeyDeal` 的 `+0x58`、`+0x70`、`+0x88`。此外该函数会把 `authKeyTypes` 的支持掩码置入位 `2`，并将 `aesKeyTypes` 和 `aesIvTypes` 均置入位 `4`；故从本样本默认值出发，Lyra 入口发出的能力集合会变为 `authKeyTypes=3`、`authAlgorithmTypes=7`、`integrityTypes=1`、`aesKeyTypes=5`、`aesIvTypes=7`。
 
 这解释了 type 4 材料的来源：`genAuthKey(2)` 与 `genAesKey(..., 4)` 读取 `SafetyKeyDeal +0x58`（受信任的 `authKey`），`genAesIv(..., 4)` 读取 `+0x88`（受信任的 `streamIV`）；`streamKey` 位于 `+0x70`，属于后续流媒体材料，而不能凭空代入安全认证。项目中的 `MiPlayLyraSecretKeyCodec` 只提供这个 JSON 的离线、无日志编解码；它不发现、生成、传输或伪造任何密钥。

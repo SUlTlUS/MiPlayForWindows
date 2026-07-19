@@ -176,6 +176,7 @@ public sealed class MiPlayProtocolTests
         {
             Assert.Equal(16, Encoding.UTF8.GetByteCount(key));
             Assert.Matches("^[0-9a-f]{16}$", key);
+            Assert.Equal('4', key[12]);
         });
     }
 

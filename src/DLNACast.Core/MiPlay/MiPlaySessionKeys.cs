@@ -1,5 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -59,8 +58,7 @@ public sealed record MiPlaySessionKeys
         return Encoding.UTF8.GetString(stream.ToArray());
     }
 
-    private static string GenerateKey() => Convert.ToHexString(
-        RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+    private static string GenerateKey() => Guid.NewGuid().ToString("N")[..16];
 
     private static void ValidateKey(string key, string parameterName)
     {
