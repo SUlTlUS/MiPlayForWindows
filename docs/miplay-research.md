@@ -302,7 +302,19 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 
 继续复核 Java 回调层后，`CmdSessionControl` 还暴露了 `CMD_SESSION_INFO_GET_DEVICEINFO_ACK = 210015`、`CMD_SESSION_INFO_SET_DEVICEINFO_ACK = 210028`、`CMD_SESSION_INFO_NOTIFY_DEVICEINFO = 211007`，以及 `onCmdSessionDeviceInfoAck(byte[])` / `onCmdSessionDeviceInfoExNotify(byte[])` / `onCmdSessionDeviceInfoNotify(byte[])` 三个 byte-array 回调。`setLocalDeviceInfo(byte[])` 本身只检查 `sessionType == 2` 后进入 native；Java 对 `SET_DEVICEINFO_ACK` 没有进一步业务处理。因此，后续即便测试 `0x0058`，也不应把“连接保持”或“静默 ack”误判为完整 device-info 成功；更可靠的观察目标仍是 `0x001e` 触发的 device-info bytes，且 `MiplaySessionCallbackManage.cmdSessionDevicesInfo(...)` 要求回包长度至少 40 bytes 才进入 `analysisDeviceInfo(...)`。
 
-离线单测现在固定四类 payload/封装：中文 sourceName + 大写 MD5、缺失蓝牙 MAC 时的空 hash、`model/romVersion/appVersion` 三字段，以及非空 `0x0058 setLocalDeviceInfo` JSON payload 在 `0x001e` 之后继续沿同一 SafetyData CBC state 加密封装；当前 77/77 通过。仍未向 S12 发送 `0x0058`。下一次真机前需要先闭环：两条 `0x0058` 是否都必须发送、相对于 `0x001e` 的顺序、sourceName/model/rom/appVersion 的 Windows 等价取值、以及失败时设备会关闭还是返回可解密响应。
+离线单测现在固定五类 payload/封装：中文 sourceName + 大写 MD5、缺失蓝牙 MAC 时的空 hash、`model/romVersion/appVersion` 三字段、非空 `0x0058 setLocalDeviceInfo` JSON payload 在 `0x001e` 之后继续沿同一 SafetyData CBC state 加密封装，以及 `0x001e -> 0x0058 -> 0x0058` 三帧连续 post-auth 序列；当前 78/78 通过。仍未向 S12 发送 `0x0058`。
+
+#### 2026-07-19 post-auth 本地设备信息三帧 probe 实现（未实机发送）
+
+基于 `MiPlayAudioService.cmdSessionSuccess(...)` 的 APK 顺序，`DLNACast.Probe` 新增显式门控参数 `--miplay-native-safety-mutual-auth-local-device-info-probe=<IPv4>`。它复用已验证的完整 SafetyAuth 互验路径，且只有在本端 `0x1402` 被设备 `0x1403` 验证、本端也验证设备 `0x1402 -> 0x1403` 后，才按同一 SafetyData sender CBC state 连续发送三帧：
+
+| 顺序 | command | seq | plaintext |
+| --- | --- | --- | --- |
+| 1 | `0x001e getDeviceInfo` | `0x0004` | 空 payload |
+| 2 | `0x0058 setLocalDeviceInfo` | `0x0005` | `sourceName`、`mSourceBtMac`、`canAlonePlayCtrl`、`canHeadsetCtrl` JSON |
+| 3 | `0x0058 setLocalDeviceInfo` | `0x0006` | `model`、`romVersion`、`appVersion` JSON |
+
+默认 Windows 等价取值仅用于 probe：`sourceName="DLNACast Windows"`、蓝牙 MAC 为空 hash、`canAlonePlayCtrl="0"`、`model="Windows"`、`romVersion=Environment.OSVersion.VersionString`、`appVersion=1`；可用 `--miplay-local-source-name=`、`--miplay-local-bluetooth-mac=`、`--miplay-local-can-alone-play-ctrl=`、`--miplay-local-model=`、`--miplay-local-rom-version=`、`--miplay-local-app-version=` 覆盖。该 probe 明确不发送 heartbeat、媒体、RTSP、音频、播放、openDevice 或其他业务控制；发送三帧后只读观察 5 秒，并只尝试解密响应。是否会返回长度至少 40 bytes 的 device-info bytes、静默 ack、或直接关闭连接，仍需单台 S12 实机验证。
 
 ### OPack 内层封装
 
@@ -490,7 +502,8 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-observe-probe=<IPv4>`：发送范围与互验 probe 相同；只有在本端 `0x1402` 与设备 `0x1402` 均完成 `0x1403` HMAC 验证后，继续只读观察一个 5 秒窗口，不发送 post-auth heartbeat、getDeviceInfo、setLocalDeviceInfo、RTSP、音频、播放、openDevice 或其他控制帧；
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-heartbeat-probe=<IPv4>`：发送范围与互验 probe 相同；只有完整互验后，发送一次 SafetyData 加密空 payload 的 `0x001a` heartbeat（当前源端 seq `0x0004`），随后只读观察，不再发送第二次 heartbeat、heartbeat ack、getDeviceInfo、setLocalDeviceInfo、媒体、RTSP、音频、播放、openDevice 或其他控制帧；
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-device-info-probe=<IPv4>`：发送范围与互验 probe 相同；只有完整互验后，发送一次 SafetyData 加密空 payload 的 `0x001e getDeviceInfo`（当前源端 seq `0x0004`），随后只读观察并仅尝试解密响应，不发送 `0x0058 setLocalDeviceInfo`、heartbeat、媒体、RTSP、音频、播放、openDevice 或其他控制帧；
-- 覆盖上述离线协议原语的 77 个单元测试（2026-07-19：77/77 通过）。
+- `DLNACast.Probe --miplay-native-safety-mutual-auth-local-device-info-probe=<IPv4>`：发送范围与互验 probe 相同；只有完整互验后，按 APK 顺序发送一次 `0x001e getDeviceInfo`（seq `0x0004`）和两次 SafetyData 加密 JSON payload 的 `0x0058 setLocalDeviceInfo`（seq `0x0005`/`0x0006`），随后只读观察，不发送 heartbeat、媒体、RTSP、音频、播放、openDevice 或其他控制帧；
+- 覆盖上述离线协议原语的 78 个单元测试（2026-07-19：78/78 通过）。
 
 这些测试验证的是本地字节序、边界条件和解析行为，并不等同于音箱上的认证、播放或端到端延迟验证。
 
@@ -499,7 +512,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 1. `0x1401 result="0"` 在两台 S12 上会继续进入 `0x1402`，但 result 值本身的命名语义、各固件差异，以及其他可接受组合仍未知；
 2. `authKeyTypes`、`authAlgorithmTypes`、`integrityTypes`、`aesKeyTypes`、`aesIvTypes` 的位/枚举语义，以及设备实际可接受的组合；
 3. 完整 SafetyAuth 互验已在 `192.168.10.4` 上通过：本端 `0x1402` 得到设备 `0x1403 authMsgAck` HMAC 验证，本端也已回复设备 `0x1402`；只读观察显示源端认证后保持静默时设备会主动关闭 8899/TCP；
-4. 该验证仍只覆盖认证层；单次 `0x001a` heartbeat 未得到 `0x001b` ack，单次 `0x001e getDeviceInfo` 未得到 device-info 响应，认证后的 `0x0058 setLocalDeviceInfo` payload 已离线编码锁定但尚未发送实测；keepalive/reaper 完整行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
+4. 该验证仍只覆盖认证层；单次 `0x001a` heartbeat 未得到 `0x001b` ack，单次 `0x001e getDeviceInfo` 未得到 device-info 响应，认证后的 `0x0058 setLocalDeviceInfo` payload 与三帧 probe 已离线编码锁定但尚未发送实测；keepalive/reaper 完整行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
 5. 非 Xiaomi 系统如何建立 Continuity/Lyra 所需的受信任身份、设备确认和会话密钥同步；
 6. 在不破坏现有播放会话的前提下，用单台测试音箱验证完整认证、回连、媒体协商与实际延迟。
 

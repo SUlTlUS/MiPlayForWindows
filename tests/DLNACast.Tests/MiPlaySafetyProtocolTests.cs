@@ -860,6 +860,81 @@ public sealed class MiPlaySafetyProtocolTests
     }
 
     [Fact]
+    public void PostAuthLocalDeviceInfoSequenceUsesGetDeviceInfoThenTwoEncryptedSetLocalDeviceInfoFrames()
+    {
+        var key = Encoding.ASCII.GetBytes("0123456789abcdef");
+        var iv = Encoding.ASCII.GetBytes("fedcba9876543210");
+        var sender = new MiPlaySafetyDataSessionCipher(key, iv);
+
+        var previousSafetyData = sender.EncryptVersion1("previous-auth-frame"u8);
+        var getDeviceInfoSafetyData = sender.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+        var sourceNamePayload = MiPlayLocalDeviceInfoPayloadCodec.EncodeSourceName(
+            sourceName: "DLNACast Windows",
+            bluetoothMac: null,
+            canAlonePlayCtrl: "0");
+        var sourceNameSafetyData = sender.EncryptVersion1(sourceNamePayload);
+        var localDeviceInfoPayload = MiPlayLocalDeviceInfoPayloadCodec.EncodeLocalDeviceInfo(
+            model: "Windows",
+            romVersion: "Windows 11",
+            appVersion: 1);
+        var localDeviceInfoSafetyData = sender.EncryptVersion1(localDeviceInfoPayload);
+
+        Assert.NotEqual(sourceNamePayload, sourceNameSafetyData);
+        Assert.NotEqual(localDeviceInfoPayload, localDeviceInfoSafetyData);
+        Assert.NotEqual(
+            MiPlaySafetyDataCodec.EncryptVersion1(localDeviceInfoPayload, key, iv),
+            localDeviceInfoSafetyData);
+
+        var getDeviceInfoFrame = MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.GetDeviceInfoCommand,
+            sequence: 4,
+            getDeviceInfoSafetyData);
+        var sourceNameFrame = MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.SetLocalDeviceInfoCommand,
+            sequence: 5,
+            sourceNameSafetyData);
+        var localDeviceInfoFrame = MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.SetLocalDeviceInfoCommand,
+            sequence: 6,
+            localDeviceInfoSafetyData);
+
+        Assert.True(MiPlayCommandFrameCodec.TryDecode(getDeviceInfoFrame, out var decodedGetDeviceInfoFrame, out var getDeviceInfoBytesConsumed));
+        Assert.NotNull(decodedGetDeviceInfoFrame);
+        Assert.Equal(getDeviceInfoFrame.Length, getDeviceInfoBytesConsumed);
+        Assert.Equal(MiPlayProtocolConstants.GetDeviceInfoCommand, decodedGetDeviceInfoFrame.Command);
+        Assert.Equal((ushort)4, decodedGetDeviceInfoFrame.Sequence);
+        Assert.Equal(getDeviceInfoSafetyData, decodedGetDeviceInfoFrame.Payload);
+
+        Assert.True(MiPlayCommandFrameCodec.TryDecode(sourceNameFrame, out var decodedSourceNameFrame, out var sourceNameBytesConsumed));
+        Assert.NotNull(decodedSourceNameFrame);
+        Assert.Equal(sourceNameFrame.Length, sourceNameBytesConsumed);
+        Assert.Equal(MiPlayProtocolConstants.SetLocalDeviceInfoCommand, decodedSourceNameFrame.Command);
+        Assert.Equal((ushort)5, decodedSourceNameFrame.Sequence);
+        Assert.Equal(sourceNameSafetyData, decodedSourceNameFrame.Payload);
+
+        Assert.True(MiPlayCommandFrameCodec.TryDecode(localDeviceInfoFrame, out var decodedLocalDeviceInfoFrame, out var localDeviceInfoBytesConsumed));
+        Assert.NotNull(decodedLocalDeviceInfoFrame);
+        Assert.Equal(localDeviceInfoFrame.Length, localDeviceInfoBytesConsumed);
+        Assert.Equal(MiPlayProtocolConstants.SetLocalDeviceInfoCommand, decodedLocalDeviceInfoFrame.Command);
+        Assert.Equal((ushort)6, decodedLocalDeviceInfoFrame.Sequence);
+        Assert.Equal(localDeviceInfoSafetyData, decodedLocalDeviceInfoFrame.Payload);
+
+        var receiver = new MiPlaySafetyDataSessionCipher(key, iv);
+        Assert.True(receiver.TryDecryptVersion1(previousSafetyData, out var previousDecoded));
+        Assert.NotNull(previousDecoded);
+        Assert.Equal("previous-auth-frame"u8.ToArray(), previousDecoded.Plaintext);
+        Assert.True(receiver.TryDecryptVersion1(getDeviceInfoSafetyData, out var getDeviceInfoDecoded));
+        Assert.NotNull(getDeviceInfoDecoded);
+        Assert.Empty(getDeviceInfoDecoded.Plaintext);
+        Assert.True(receiver.TryDecryptVersion1(sourceNameSafetyData, out var sourceNameDecoded));
+        Assert.NotNull(sourceNameDecoded);
+        Assert.Equal(sourceNamePayload, sourceNameDecoded.Plaintext);
+        Assert.True(receiver.TryDecryptVersion1(localDeviceInfoSafetyData, out var localDeviceInfoDecoded));
+        Assert.NotNull(localDeviceInfoDecoded);
+        Assert.Equal(localDeviceInfoPayload, localDeviceInfoDecoded.Plaintext);
+    }
+
+    [Fact]
     public void LegacySafetyChallengeProducesTheVerifiedResponseFrame()
     {
         var challengeFrame = MiPlayCommandFrameCodec.Encode(
