@@ -76,6 +76,80 @@ public sealed class MiPlayProtocolTests
     }
 
     [Fact]
+    public void DecodesObservedMiPlayNotifyModeAndStatePayloads()
+    {
+        var decodedMode = MiPlayNotifyPayloadCodec.TryDecode(
+            Convert.FromHexString("046D6F64650302"),
+            out var mode,
+            out var modeBytesConsumed);
+        var decodedState = MiPlayNotifyPayloadCodec.TryDecode(
+            Convert.FromHexString("0573746174650303"),
+            out var state,
+            out var stateBytesConsumed);
+
+        Assert.True(decodedMode);
+        Assert.NotNull(mode);
+        Assert.Equal("mode", mode.Label);
+        Assert.Equal(MiPlayNotifyPayloadCodec.ByteValueType, mode.ValueType);
+        Assert.Equal(2, mode.IntegerValue);
+        Assert.Empty(mode.Fields);
+        Assert.Equal(7, modeBytesConsumed);
+
+        Assert.True(decodedState);
+        Assert.NotNull(state);
+        Assert.Equal("state", state.Label);
+        Assert.Equal(MiPlayNotifyPayloadCodec.ByteValueType, state.ValueType);
+        Assert.Equal(3, state.IntegerValue);
+        Assert.Empty(state.Fields);
+        Assert.Equal(8, stateBytesConsumed);
+    }
+
+    [Fact]
+    public void DecodesObservedMiPlayNotifyMediaInfoExFields()
+    {
+        var payload = Convert.FromHexString(
+            "0B6D65646961496E666F4578160000009C" +
+            "026964140000000130" +
+            "066D416C62756D1400000000" +
+            "076D4172746973741400000000" +
+            "086D417564696F4964140000000130" +
+            "096D436F76657255726C1400000000" +
+            "0C6D4465766963655374617465140000000133" +
+            "096D4475726174696F6E140000000130" +
+            "096D506F736974696F6E140000000130" +
+            "066D5469746C651400000000" +
+            "056D547970651400000005617564696F" +
+            "06737461747573140000000133");
+
+        var decoded = MiPlayNotifyPayloadCodec.TryDecode(payload, out var notify, out var bytesConsumed);
+
+        Assert.True(decoded);
+        Assert.NotNull(notify);
+        Assert.Equal(payload.Length, bytesConsumed);
+        Assert.Equal("mediaInfoEx", notify.Label);
+        Assert.Equal(MiPlayNotifyPayloadCodec.ObjectValueType, notify.ValueType);
+        Assert.Equal(156, notify.DeclaredPayloadLength);
+        Assert.Equal(
+            ["id", "mAlbum", "mArtist", "mAudioId", "mCoverUrl", "mDeviceState", "mDuration", "mPosition", "mTitle", "mType", "status"],
+            notify.Fields.Select(field => field.Name));
+        Assert.Equal("0", notify.Fields.Single(field => field.Name == "id").StringValue);
+        Assert.Equal("3", notify.Fields.Single(field => field.Name == "mDeviceState").StringValue);
+        Assert.Equal("audio", notify.Fields.Single(field => field.Name == "mType").StringValue);
+        Assert.Equal("3", notify.Fields.Single(field => field.Name == "status").StringValue);
+    }
+
+    [Fact]
+    public void RejectsTruncatedMiPlayNotifyPayload()
+    {
+        var malformed = Convert.FromHexString("0B6D65646961496E666F4578160000009C02696414");
+
+        var decoded = MiPlayNotifyPayloadCodec.TryDecode(malformed, out var notify, out var bytesConsumed);
+
+        Assert.False(decoded);
+        Assert.Null(notify);
+        Assert.Equal(0, bytesConsumed);
+    }
+    [Fact]
     public void SessionKeyJsonMatchesMiPlayFieldNamesAndOrder()
     {
         var keys = MiPlaySessionKeys.Create(

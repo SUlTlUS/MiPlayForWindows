@@ -18,6 +18,9 @@ public static class MiPlayProtocolConstants
     public const ushort GetDeviceInfoCommand = 0x001E;
     public const ushort SetLocalDeviceInfoCommand = 0x0058;
 
+    // Device-side notify frames observed before SafetyAuth completes; native routes them to onRecvNotify.
+    public const ushort NotifyCommand = 0x0022;
+
     // Legacy challenge/response that precedes the modern SafetyInfo exchange.
     public const ushort LegacySafetyChallengeCommand = 0x0028;
     public const ushort LegacySafetyAcknowledgementCommand = 0x0029;

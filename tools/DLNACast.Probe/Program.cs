@@ -280,6 +280,14 @@ static async Task ProbeMiPlayLegacySafetyAsync(
 
             observedFrames++;
             Console.WriteLine($"Observed follow-up command=0x{followUp.Command:X4}, sequence=0x{followUp.Sequence:X4}, payload={Convert.ToHexString(followUp.Payload)}.");
+            if (followUp.Command == MiPlayProtocolConstants.NotifyCommand &&
+                MiPlayNotifyPayloadCodec.TryDecode(followUp.Payload, out var notifyPayload, out var notifyBytesConsumed) &&
+                notifyPayload is not null &&
+                notifyBytesConsumed == followUp.Payload.Length)
+            {
+                Console.WriteLine($"Decoded notify command=0x{MiPlayProtocolConstants.NotifyCommand:X4}, sequence=0x{followUp.Sequence:X4}, {DescribeNotifyPayload(notifyPayload)}. Native static evidence routes this to onRecvNotify without constructing a reply; the probe sends no notify acknowledgement.");
+            }
+
             if (completedMutualSafetyAuth)
             {
                 if (selectedSafetyAuthCandidate is { } postAuthCandidate &&
@@ -750,6 +758,32 @@ static string DescribeOpackPrefix(ReadOnlySpan<byte> data)
 
     var payloadLength = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(valueTypeOffset + 1, sizeof(uint)));
     return $"plaintextLength={data.Length}, tag={tag}, valueType={data[valueTypeOffset]}, declaredPayloadLength={payloadLength}";
+}
+
+static string DescribeNotifyPayload(MiPlayNotifyPayload notify)
+{
+    if (notify.IntegerValue is { } integerValue)
+    {
+        return $"label={notify.Label}, valueType=0x{notify.ValueType:X2}, integerValue={integerValue}";
+    }
+
+    var fields = string.Join(',', notify.Fields.Select(DescribeNotifyField));
+    return $"label={notify.Label}, valueType=0x{notify.ValueType:X2}, declaredPayloadLength={notify.DeclaredPayloadLength}, fields=[{fields}]";
+}
+
+static string DescribeNotifyField(MiPlayNotifyField field)
+{
+    if (field.StringValue is { } stringValue)
+    {
+        return $"{field.Name}:0x{field.ValueType:X2}={JsonSerializer.Serialize(stringValue)}";
+    }
+
+    if (field.IntegerValue is { } integerValue)
+    {
+        return $"{field.Name}:0x{field.ValueType:X2}={integerValue}";
+    }
+
+    return $"{field.Name}:0x{field.ValueType:X2}";
 }
 
 static string DescribeJsonObjectFields(ReadOnlySpan<byte> payload)
