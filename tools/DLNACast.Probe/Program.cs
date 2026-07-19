@@ -373,7 +373,8 @@ static async Task ProbeMiPlayLegacySafetyAsync(
                 }
                 else
                 {
-                    Console.WriteLine("Post-auth observe mode: frame logged, but SafetyData decrypt did not succeed; no response or control data will be sent.");
+                    var failure = MiPlaySafetyDataDiagnostics.DescribeVersion1DecodeFailure(followUp.Payload);
+                    Console.WriteLine($"Post-auth observe mode: frame logged, but SafetyData decrypt did not succeed ({failure}); no response or control data will be sent.");
                 }
 
                 continue;

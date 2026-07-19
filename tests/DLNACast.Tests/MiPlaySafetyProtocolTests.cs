@@ -268,6 +268,28 @@ public sealed class MiPlaySafetyProtocolTests
     }
 
     [Fact]
+    public void SafetyDataDiagnosticsDescribeHeaderCrcAndDecryptFailureClasses()
+    {
+        var key = Encoding.ASCII.GetBytes("0123456789abcdef");
+        var iv = Encoding.ASCII.GetBytes("fedcba9876543210");
+        var encoded = MiPlaySafetyDataCodec.EncryptVersion1("diagnostic"u8, key, iv);
+        var invalidCrc = encoded.ToArray();
+        invalidCrc[^1] ^= 0x01;
+
+        var invalidHeader = MiPlaySafetyDataDiagnostics.DescribeVersion1DecodeFailure(encoded.AsSpan(0, 3));
+        var crcMismatch = MiPlaySafetyDataDiagnostics.DescribeVersion1DecodeFailure(invalidCrc);
+        var decryptOrPadding = MiPlaySafetyDataDiagnostics.DescribeVersion1DecodeFailure(encoded);
+
+        Assert.Equal("header=invalid,length=3", invalidHeader);
+        Assert.Contains("header=ok,headerLength=9,flags=0xE0", crcMismatch, StringComparison.Ordinal);
+        Assert.Contains("failure=crc-mismatch", crcMismatch, StringComparison.Ordinal);
+        Assert.Contains("storedCrc=", crcMismatch, StringComparison.Ordinal);
+        Assert.Contains("computedCrc=", crcMismatch, StringComparison.Ordinal);
+        Assert.Contains("header=ok,headerLength=9,flags=0xE0", decryptOrPadding, StringComparison.Ordinal);
+        Assert.Contains("failure=decrypt-or-padding", decryptOrPadding, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ObservedS12SafetyAuthChallengeDecryptsWithRecoveredTcpSessionMaterial()
     {
         var receivedSafetyData = Convert.FromHexString(
