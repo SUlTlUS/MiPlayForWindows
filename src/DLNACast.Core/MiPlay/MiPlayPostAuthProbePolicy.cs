@@ -9,6 +9,8 @@ public sealed record MiPlayPostAuthStagedDeviceInfoDecision(bool CanSend, string
 /// </summary>
 public static class MiPlayPostAuthProbePolicy
 {
+    public const int MinimumDeviceInfoAcknowledgementPayloadLength = 40;
+
     public static MiPlayPostAuthStagedDeviceInfoDecision EvaluateStagedLocalDeviceInfoGate(
         bool awaitingGetDeviceInfoAcknowledgement,
         bool hasLocalDeviceInfoPayloads,
@@ -48,9 +50,11 @@ public static class MiPlayPostAuthProbePolicy
             return new MiPlayPostAuthStagedDeviceInfoDecision(false, "The getDeviceInfo acknowledgement sequence does not match the pending request.");
         }
 
-        if (decryptedPayloadLength == 0)
+        if (decryptedPayloadLength < MinimumDeviceInfoAcknowledgementPayloadLength)
         {
-            return new MiPlayPostAuthStagedDeviceInfoDecision(false, "The decrypted getDeviceInfo acknowledgement payload is empty.");
+            return new MiPlayPostAuthStagedDeviceInfoDecision(
+                false,
+                $"The decrypted getDeviceInfo acknowledgement payload is shorter than {MinimumDeviceInfoAcknowledgementPayloadLength} bytes.");
         }
 
         return new MiPlayPostAuthStagedDeviceInfoDecision(true, "The decrypted getDeviceInfo acknowledgement matches the staged local device info gate.");
