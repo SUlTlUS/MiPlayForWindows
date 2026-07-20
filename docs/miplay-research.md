@@ -326,6 +326,22 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 
 staged 版本已对单台 `192.168.10.4` 执行一次：local TCP 端点为 `192.168.10.9:4079`，前置 `0x0036` / `0x0029` / `0x1400` 与完整 SafetyAuth 互验均成功；随后只发送 `0x001e getDeviceInfo` seq `0x0004`，SafetyData encryptedPayloadLength `25`。设备在累计 7 个 follow-up frame 后主动关闭 TCP；未收到 `0x001f getDeviceInfo ACK`，因此 staged probe 没有发送任何 `0x0058`。这把旧三帧结果进一步收窄为：S12 在当前 Windows 会话材料/状态下，对认证后的单条 `0x001e` 仍无可解密 ACK。
 
+#### 2026-07-20 单次 post-auth getDeviceInfo 诊断复验
+
+在新增只读 SafetyData 解密失败诊断后，对单台 `192.168.10.4` 执行一次 `--miplay-native-safety-mutual-auth-device-info-probe=<IPv4>` 复验。发送边界仍为：完整 SafetyAuth 互验成功后，只额外发送一次 SafetyData 加密空 payload 的 `0x001e getDeviceInfo`；随后只读观察，不发送 `0x0058 setLocalDeviceInfo`、heartbeat、RTSP、音频、播放、openDevice、媒体或其他业务控制帧。
+
+| 项目 | 结果 |
+| --- | --- |
+| TCP 端点 | local `192.168.10.9:6334`，peer `192.168.10.4:8899` |
+| 前置版本 / notify | 收到 `0x0037` = `2.1.5091615\0`；只读解析三个 `0x0022` notify：`mode=2`、`mediaInfoEx`、`state=3`，未回复 notify |
+| SafetyInfo | `0x1401 result=0`，选择 `(authKey=1, authAlgorithm=4, integrity=1, aesKey=1, aesIv=2)` |
+| SafetyAuth 互验 | 本端加密 `0x1402` seq `0x0003` 被设备 `0x1403` seq `0x0003` HMAC 验证；设备 `0x1402` seq `0x0000` 被本端 `0x1403` seq `0x0000` 回复 |
+| post-auth getDeviceInfo | 发送 `0x001e` seq `0x0004`，SafetyData encryptedPayloadLength `25`，candidate `peer-first:observed-s12-inbound-iv-type1` |
+| 设备后续行为 | 未收到 `0x001f`、`0x0059`、其他 post-auth command，且没有可供新增 SafetyData 诊断分类的 post-auth 解密失败帧；设备在累计 7 个 follow-up frame 后关闭 TCP |
+| 发送边界 | `0x001e` 后没有发送任何数据；未发送 `0x0058`、heartbeat、openDevice、RTSP、媒体、音频或播放控制 |
+
+结论：2026-07-20 复验再次确认 SafetyAuth 双向完成稳定，但单次认证后 `0x001e getDeviceInfo` 仍不能触发 S12 返回 `0x001f` 或任何可诊断 post-auth 帧；新增 header/CRC 诊断本轮没有命中，因为 `0x001e` 后设备直接关闭连接而不是回发损坏或未知 SafetyData。
+
 #### 2026-07-19 `0x0022` notify payload 离线解析
 
 为排除“忽略设备前置 `0x0022` 导致 post-auth 中止”的低级可能，新增诊断级 `MiPlayNotifyPayloadCodec`。它只解码已实机观察到的 OPack-like notify payload，不构造回复，也不改变 probe 的发送范围。当前三类观测样本均可稳定解析：`mode=2`、`state=3`，以及 `mediaInfoEx` 对象，其 11 个字段为 `id`、`mAlbum`、`mArtist`、`mAudioId`、`mCoverUrl`、`mDeviceState`、`mDuration`、`mPosition`、`mTitle`、`mType`、`status`；其中 `mType="audio"`、`mDeviceState="3"`、`status="3"`。Probe 以后只会把这些 notify 打成摘要日志，并继续遵守静态证据：native `onRecvNotify` 上报 listener，但不构造 notify ack。
@@ -534,7 +550,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 1. `0x1401 result="0"` 在两台 S12 上会继续进入 `0x1402`，但 result 值本身的命名语义、各固件差异，以及其他可接受组合仍未知；
 2. `authKeyTypes`、`authAlgorithmTypes`、`integrityTypes`、`aesKeyTypes`、`aesIvTypes` 的位/枚举语义，以及设备实际可接受的组合；
 3. 完整 SafetyAuth 互验已在 `192.168.10.4` 上通过：本端 `0x1402` 得到设备 `0x1403 authMsgAck` HMAC 验证，本端也已回复设备 `0x1402`；只读观察显示源端认证后保持静默时设备会主动关闭 8899/TCP；
-4. 该验证仍只覆盖认证层；单次 `0x001a` heartbeat 未得到 `0x001b` ack，单次 `0x001e getDeviceInfo` 未得到 device-info 响应，认证后的 `0x0058 setLocalDeviceInfo` payload 与 staged probe 已离线编码锁定；旧三帧 probe 已对 `192.168.10.4` 单次发送但没有得到 post-auth 响应，当前 staged 版本也已对 `192.168.10.4` 单次发送认证后的 `0x001e`，未收到 `0x001f`，所以未发送 `0x0058`；keepalive/reaper 完整行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
+4. 该验证仍只覆盖认证层；单次 `0x001a` heartbeat 未得到 `0x001b` ack，2026-07-19 与 2026-07-20 两次单条 `0x001e getDeviceInfo` 均未得到 `0x001f` 或其他 post-auth 响应，认证后的 `0x0058 setLocalDeviceInfo` payload 与 staged probe 已离线编码锁定但当前 staged 门控未满足，所以不会发送 `0x0058`；keepalive/reaper 完整行为、状态查询/回连/媒体协商/播放控制、低延迟音频发送和非类型 1 完整性算法仍未实测；
 5. 非 Xiaomi 系统如何建立 Continuity/Lyra 所需的受信任身份、设备确认和会话密钥同步；
 6. 在不破坏现有播放会话的前提下，用单台测试音箱验证完整认证、回连、媒体协商与实际延迟。
 
