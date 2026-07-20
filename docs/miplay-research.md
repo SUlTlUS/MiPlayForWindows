@@ -306,7 +306,7 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 
 继续对 `libaudiomirror-jni.so` 的 `CmdSource::onRecvCmd` 限址反汇编后，已把 post-auth device-info ACK 的 TCP wire command 补齐：`0x001f` 在接收跳表中跳到 `0x180aa4`，非空 payload 分支调用 listener vtable offset `0x28`，对应 Java `onCmdSessionDeviceInfoAck(byte[])`；`0x0059` 跳到 `0x180bc4`，调用 listener vtable offset `0x50` 并传入事件码 `0x0003346c`（十进制 `210028`），对应 `CMD_SESSION_INFO_SET_DEVICEINFO_ACK`。同一跳表还确认 `0x0022` 跳到 `0x180c44` 的 `onRecvNotify`。因此 probe 现在把可解密的 `0x001f` / `0x0059` 识别为 ACK 证据，但不对它们构造回复。
 
-离线单测现在固定五类 payload/封装：中文 sourceName + 大写 MD5、缺失蓝牙 MAC 时的空 hash、`model/romVersion/appVersion` 三字段、非空 `0x0058 setLocalDeviceInfo` JSON payload 在 `0x001e` 之后继续沿同一 SafetyData CBC state 加密封装，以及 `0x001e -> 0x0058 -> 0x0058` 三帧连续 post-auth 序列；再加上 `0x0022` notify payload 解析、staged `0x0058` 发送门控策略、“失败解密不得推进入站 CBC state”的回归测试，以及 SafetyData 解密失败 header/CRC 诊断测试，当前已并入 92/92 回归通过。
+离线单测现在固定五类 payload/封装：中文 sourceName + 大写 MD5、缺失蓝牙 MAC 时的空 hash、`model/romVersion/appVersion` 三字段、非空 `0x0058 setLocalDeviceInfo` JSON payload 在 `0x001e` 之后继续沿同一 SafetyData CBC state 加密封装，以及 `0x001e -> 0x0058 -> 0x0058` 三帧连续 post-auth 序列；再加上 `0x0022` notify payload 解析、staged `0x0058` 发送门控策略、“失败解密不得推进入站 CBC state”的回归测试，以及 SafetyData 解密失败 header/CRC 诊断测试，当前已并入 96/96 回归通过。
 
 #### 2026-07-19 post-auth 本地设备信息 staged probe 与一次旧三帧实机结果
 
@@ -341,6 +341,24 @@ staged 版本已对单台 `192.168.10.4` 执行一次：local TCP 端点为 `192
 | 发送边界 | `0x001e` 后没有发送任何数据；未发送 `0x0058`、heartbeat、openDevice、RTSP、媒体、音频或播放控制 |
 
 结论：2026-07-20 复验再次确认 SafetyAuth 双向完成稳定，但单次认证后 `0x001e getDeviceInfo` 仍不能触发 S12 返回 `0x001f` 或任何可诊断 post-auth 帧；新增 header/CRC 诊断本轮没有命中，因为 `0x001e` 后设备直接关闭连接而不是回发损坏或未知 SafetyData。
+
+#### 2026-07-20 `DealSafetyDone -> onSuccess -> getDeviceInfo` 离线静态追踪补充
+
+本轮未进行任何网络操作，也没有重复实机复验。用户提供的本地 APK 为 `D:/下载/com.xiaomi.mi_connect_service_5.1.251.10-50012511_minAPI28(arm64-v8a)(nodpi)_apkmirror.com.apk`，SHA-256 `79CD356D366AF239F20B9B24286BCB882B2E850D06F1B50673A2C4F664FFBA46`。`aapt dump badging` 确认包名 `com.xiaomi.mi_connect_service`、版本 `5.1.251.10`、`native-code: arm64-v8a`；manifest 暴露 `MiConnectService`、`ContinuityConnectionManagerService`、`NetworkingService`、`DeviceService`、`NetBusService`、`MiWearCoreService`，并依赖 `com.xiaomi.permission.BIND_CONTINUITY_SERVICE` / `BIND_CONTINUITY_SERVICE_INTERNAL` / `BIND_CONTINUITY_LISTENER_SERVICE` 等系统权限。
+
+重要边界：该 APK 不是先前静态记录的 `com.milink.service` / `MiPlayAudioService` 18.0.0.3 旧式 command-session 样本。Java 反编译中未命中 `CmdSessionControl`、`MiplaySessionCallbackProxy`、`cmdSessionSuccess`、`DealSafetyDone` 等旧符号；native `libmicontinuity.so` 中可见的是 Lyra/NetBus 的 `lyra::netbus::mpt::MiplayTransport*` 符号与 `urn:aiot-spec-v3:com.mi.idm:service:miplay-audio:00017803:1.0` 字符串，未见 `DealSafety*` / `CmdSource` / `SafetyAuth` 符号。因此旧链条仍以 18.0.0.3 证据为准：native `DealSafetyDone()` 触发 listener event `0x00030D41`，Java `CmdSessionControl.onCmdSessionInfo(200001, extra)` 调用 `CmdClientCallback.onSuccess()`，`MiplaySessionCallbackProxy.onSuccess()` 投递 message `38`，最后 `MiPlayAudioService.cmdSessionSuccess(...)` 才调用 `cmdSessionControl.getDeviceInfo()`。
+
+新 APK 补到的是上层 Lyra/Continuity 所需的身份与会话上下文，而这些正是当前裸 8899 Probe 尚未复原的部分：
+
+| 缺口 | APK 文件/符号证据 | 可测假设 |
+| --- | --- | --- |
+| listener 注册/时序 | `com.xiaomi.continuity.ContinuityConnectionManagerService.registerChannelListenerV2(...)` 先构造 `ChannelListenerServerProxy`，再调用 `ContinuityConnectionManagerNative.nativeRegisterChannelListener(serviceName.toMergeString(), appInfo, serverChannelOptionsV2, listener)`；旧 18.0.0.3 证据显示 `DealSafetyDone()` 只有 listener 存在时才上报 `0x00030D41`。 | 仅有 mutual SafetyAuth 不足以证明 Java `onSuccess` 已发生；若 listener 未在认证完成前注册并接收事件，单发 `0x001e` 应被判定为不可复验。离线测试：`EvaluateGetDeviceInfoReadiness` 拒绝 bare mutual-auth 场景。 |
+| 源端身份 | `PackageUtil.generateAppInfo(Context, uid, pid, invokePkg)` 根据调用 UID/PID/包名取签名 SHA-256，构造 `AppInfo(appId, signature, platformType=1, flags)`；`ServiceName.toMergeString()` 输出 `package:name` 或 `:name`。 | 当前 Windows Probe 的 `sourceName/model/romVersion/appVersion` 只覆盖 `0x0058` JSON，不等于 Android `AppInfo + ServiceName + signature`。在未恢复源端身份前，不应把设备关闭归因于 `0x001e` 命令号错误。离线测试：readiness 必须显式要求 `SourceIdentityAvailable`。 |
+| 设备上下文 | `DeviceService.getDeviceInfo(...) -> DeviceManagerNative.nativeGetDeviceInfo(Binder.getCallingUid(), deviceId)`；`DeviceInfo` 包含 `deviceId/deviceName/uidHash/groupId/noGroupId/discMediumTypes/connMediumTypes/capability/capabilityV2/capabilityV3`；`DeviceInfoV2` 另含 `wifiSwitch/wifiConnectStatus/bleSwitch/lyraSwitch/screenState`；`ConnectionInfo` 另含 `mediumType/connectionId/trustLevel/comparisonNumber/privateData/localIP/remoteIP/MacAddress`。 | Probe 目前只有目标 IP/端口、mDNS TXT 与本地伪 source payload，缺少 NetBus 设备记录、连接 ID、trust/privateData、medium bitmask 与 Lyra switch。若没有这些上下文，认证后无 `0x001f` 不能说明 S12 接受了最小会话。离线测试：readiness 必须显式要求 `DeviceContextAvailable`。 |
+| 连接模式/低延迟参数 | `ServerConnectionOptions` / `ClientChannelOptionsV2` / `ServerChannelOptionsV2` 携带 `mediumType/connectMediumType/trustLevel/protocolType/timeout/optionalValues`；`BusinessProfile.attachTo(...)` 写入 `scenario`、latency、bandwidth、`CHANNEL_OPTIONAL_BIZ_CONNECTION_TYPE`、`CHANNEL_OPTIONAL_LINK_CAPABILITY_FLAGS`；native `MiplayTransportSession::CreateKcpSession()` 等符号显示 Lyra MPT/KCP 传输路径。 | 新 APK 的 MiPlay audio serviceId 属于 Lyra/Continuity channel，不等价于 legacy TCP 8899 `CmdSource::getDeviceInfo()`。在没有把 S12 mDNS/8899 会话映射到 Lyra channel 前，不能用 Lyra 字段直接设计 8899 真机包。离线测试：readiness 对 `LyraContinuityChannel` 返回不可发送，只有 `LegacyTcp8899` 才可能进入 `0x001e` 假设。 |
+| 命令序列与只读边界 | 旧证据中 `CmdSource::getDeviceInfo()` 递增 `CmdSource +0x2c0` 后发送 `0x001e` 空 payload；当前实机路径使用 seq `0x0004`，且要求不发送 `0x0058`、open/play/media/RTSP/audio。 | 任何下一次复验必须继续满足“已初始化下一序号 + 只读边界”；若目标是 Lyra/Continuity 方向，则应先做纯离线 channel/session 解析，而不是发 8899 控制帧。离线测试：readiness 拒绝未初始化序号或非只读边界。 |
+
+已新增纯离线 `MiPlayPostAuthProbePolicy.EvaluateGetDeviceInfoReadiness(...)`，把上述证据折成 listener、onSuccess、source identity、device context、connection mode、sequence 与 read-only gates。该策略不被 Probe 自动调用，不会改变现有网络行为；它只用于记录“下一次受限复验必须先补齐哪些证据”。本轮判断：不值得立即再做 `0x001e` 受限复验；除非先离线恢复至少一个新的、可验证的前置条件（例如 18.0.0.3 中 listener 注册对象/时序，或 5.1.251.10 Lyra `miplay-audio` serviceId 到 S12 发现记录的真实映射），否则重复发送同一帧只会重演设备直接关闭。
 
 #### 2026-07-19 `0x0022` notify payload 离线解析
 
@@ -541,7 +559,7 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-heartbeat-probe=<IPv4>`：发送范围与互验 probe 相同；只有完整互验后，发送一次 SafetyData 加密空 payload 的 `0x001a` heartbeat（当前源端 seq `0x0004`），随后只读观察，不再发送第二次 heartbeat、heartbeat ack、getDeviceInfo、setLocalDeviceInfo、媒体、RTSP、音频、播放、openDevice 或其他控制帧；
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-device-info-probe=<IPv4>`：发送范围与互验 probe 相同；只有完整互验后，发送一次 SafetyData 加密空 payload 的 `0x001e getDeviceInfo`（当前源端 seq `0x0004`），随后只读观察并仅尝试解密响应，不发送 `0x0058 setLocalDeviceInfo`、heartbeat、媒体、RTSP、音频、播放、openDevice 或其他控制帧；
 - `DLNACast.Probe --miplay-native-safety-mutual-auth-local-device-info-probe=<IPv4>`：发送范围与互验 probe 相同；只有完整互验后，先发送一次 SafetyData 加密空 payload 的 `0x001e getDeviceInfo`（seq `0x0004`），只有收到同 seq、能解密且 plaintext 至少 40 bytes 的 `0x001f getDeviceInfo ACK` 后才发送两次 SafetyData 加密 JSON payload 的 `0x0058 setLocalDeviceInfo`（seq `0x0005`/`0x0006`），随后只读观察；未见合格 `0x001f`（同序号、可解密、plaintext 至少 40 bytes）时不发送 `0x0058`，且全程不发送 heartbeat、媒体、RTSP、音频、播放、openDevice 或其他控制帧；
-- 覆盖上述离线协议原语的 92 个单元测试（2026-07-19：92/92 通过）。
+- 覆盖上述离线协议原语的 96 个单元测试（2026-07-20：96/96 通过）。
 
 这些测试验证的是本地字节序、边界条件和解析行为，并不等同于音箱上的认证、播放或端到端延迟验证。
 

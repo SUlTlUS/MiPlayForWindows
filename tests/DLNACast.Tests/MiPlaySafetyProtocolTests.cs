@@ -1004,6 +1004,77 @@ public sealed class MiPlaySafetyProtocolTests
     }
 
     [Fact]
+    public void PostAuthGetDeviceInfoReadinessRejectsBareMutualAuthWithoutListenerIdentityOrContext()
+    {
+        var decision = MiPlayPostAuthProbePolicy.EvaluateGetDeviceInfoReadiness(
+            new MiPlayPostAuthGetDeviceInfoPrerequisites(
+                MutualSafetyAuthVerified: true,
+                CommandSessionListenerRegisteredBeforeSafetyDone: false,
+                DealSafetyDoneListenerEventDelivered: false,
+                JavaOnSuccessDispatched: false,
+                SourceIdentityAvailable: false,
+                DeviceContextAvailable: false,
+                ConnectionMode: MiPlayPostAuthConnectionMode.LegacyTcp8899,
+                NextCommandSequence: 4,
+                ReadOnlyProbeBoundary: true));
+
+        Assert.False(decision.CanSend);
+        Assert.Contains("listener registration", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PostAuthGetDeviceInfoReadinessRejectsLyraContinuityAsLegacyCommandSession()
+    {
+        var decision = MiPlayPostAuthProbePolicy.EvaluateGetDeviceInfoReadiness(
+            CompletePostAuthGetDeviceInfoPrerequisites() with
+            {
+                ConnectionMode = MiPlayPostAuthConnectionMode.LyraContinuityChannel,
+            });
+
+        Assert.False(decision.CanSend);
+        Assert.Contains("legacy TCP 8899", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PostAuthGetDeviceInfoReadinessAcceptsOnlyCompleteLegacyStaticChain()
+    {
+        var decision = MiPlayPostAuthProbePolicy.EvaluateGetDeviceInfoReadiness(
+            CompletePostAuthGetDeviceInfoPrerequisites());
+
+        Assert.True(decision.CanSend);
+    }
+
+    [Fact]
+    public void PostAuthGetDeviceInfoReadinessRequiresReadOnlyBoundaryAndInitializedSequence()
+    {
+        var notReadOnly = MiPlayPostAuthProbePolicy.EvaluateGetDeviceInfoReadiness(
+            CompletePostAuthGetDeviceInfoPrerequisites() with
+            {
+                ReadOnlyProbeBoundary = false,
+            });
+        var missingSequence = MiPlayPostAuthProbePolicy.EvaluateGetDeviceInfoReadiness(
+            CompletePostAuthGetDeviceInfoPrerequisites() with
+            {
+                NextCommandSequence = 0,
+            });
+
+        Assert.False(notReadOnly.CanSend);
+        Assert.False(missingSequence.CanSend);
+    }
+
+    private static MiPlayPostAuthGetDeviceInfoPrerequisites CompletePostAuthGetDeviceInfoPrerequisites() =>
+        new(
+            MutualSafetyAuthVerified: true,
+            CommandSessionListenerRegisteredBeforeSafetyDone: true,
+            DealSafetyDoneListenerEventDelivered: true,
+            JavaOnSuccessDispatched: true,
+            SourceIdentityAvailable: true,
+            DeviceContextAvailable: true,
+            ConnectionMode: MiPlayPostAuthConnectionMode.LegacyTcp8899,
+            NextCommandSequence: 4,
+            ReadOnlyProbeBoundary: true);
+
+    [Fact]
     public void PostAuthLocalDeviceInfoPolicyRequiresMatchingMinimumLengthGetDeviceInfoAck()
     {
         var accepted = MiPlayPostAuthProbePolicy.EvaluateStagedLocalDeviceInfoGate(

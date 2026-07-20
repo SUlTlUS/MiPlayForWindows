@@ -2,6 +2,24 @@ namespace DLNACast.Core.MiPlay;
 
 public sealed record MiPlayPostAuthStagedDeviceInfoDecision(bool CanSend, string Reason);
 
+public enum MiPlayPostAuthConnectionMode
+{
+    Unknown = 0,
+    LegacyTcp8899 = 1,
+    LyraContinuityChannel = 2,
+}
+
+public sealed record MiPlayPostAuthGetDeviceInfoPrerequisites(
+    bool MutualSafetyAuthVerified,
+    bool CommandSessionListenerRegisteredBeforeSafetyDone,
+    bool DealSafetyDoneListenerEventDelivered,
+    bool JavaOnSuccessDispatched,
+    bool SourceIdentityAvailable,
+    bool DeviceContextAvailable,
+    MiPlayPostAuthConnectionMode ConnectionMode,
+    ushort NextCommandSequence,
+    bool ReadOnlyProbeBoundary);
+
 /// <summary>
 /// Offline policy checks for constrained post-auth MiPlay probes. It only decides
 /// whether a previously observed and decrypted command satisfies the static
@@ -10,6 +28,73 @@ public sealed record MiPlayPostAuthStagedDeviceInfoDecision(bool CanSend, string
 public static class MiPlayPostAuthProbePolicy
 {
     public const int MinimumDeviceInfoAcknowledgementPayloadLength = 40;
+
+    public static MiPlayPostAuthStagedDeviceInfoDecision EvaluateGetDeviceInfoReadiness(
+        MiPlayPostAuthGetDeviceInfoPrerequisites prerequisites)
+    {
+        if (!prerequisites.MutualSafetyAuthVerified)
+        {
+            return new MiPlayPostAuthStagedDeviceInfoDecision(false, "Mutual SafetyAuth has not been verified.");
+        }
+
+        if (!prerequisites.CommandSessionListenerRegisteredBeforeSafetyDone)
+        {
+            return new MiPlayPostAuthStagedDeviceInfoDecision(
+                false,
+                "The command-session listener registration that receives DealSafetyDone is not established.");
+        }
+
+        if (!prerequisites.DealSafetyDoneListenerEventDelivered)
+        {
+            return new MiPlayPostAuthStagedDeviceInfoDecision(
+                false,
+                "DealSafetyDone has not been delivered to the command-session listener.");
+        }
+
+        if (!prerequisites.JavaOnSuccessDispatched)
+        {
+            return new MiPlayPostAuthStagedDeviceInfoDecision(
+                false,
+                "The Java onSuccess callback that schedules getDeviceInfo has not been dispatched.");
+        }
+
+        if (!prerequisites.SourceIdentityAvailable)
+        {
+            return new MiPlayPostAuthStagedDeviceInfoDecision(
+                false,
+                "The source identity context is missing.");
+        }
+
+        if (!prerequisites.DeviceContextAvailable)
+        {
+            return new MiPlayPostAuthStagedDeviceInfoDecision(
+                false,
+                "The target device context is missing.");
+        }
+
+        if (prerequisites.ConnectionMode != MiPlayPostAuthConnectionMode.LegacyTcp8899)
+        {
+            return new MiPlayPostAuthStagedDeviceInfoDecision(
+                false,
+                "The current connection mode is not the legacy TCP 8899 command-session path.");
+        }
+
+        if (prerequisites.NextCommandSequence == 0)
+        {
+            return new MiPlayPostAuthStagedDeviceInfoDecision(false, "The next command sequence is not initialized.");
+        }
+
+        if (!prerequisites.ReadOnlyProbeBoundary)
+        {
+            return new MiPlayPostAuthStagedDeviceInfoDecision(
+                false,
+                "The proposed getDeviceInfo probe is not constrained to a read-only boundary.");
+        }
+
+        return new MiPlayPostAuthStagedDeviceInfoDecision(
+            true,
+            "The static post-auth listener, identity, connection, and read-only gates are satisfied for getDeviceInfo.");
+    }
 
     public static MiPlayPostAuthStagedDeviceInfoDecision EvaluateStagedLocalDeviceInfoGate(
         bool awaitingGetDeviceInfoAcknowledgement,
