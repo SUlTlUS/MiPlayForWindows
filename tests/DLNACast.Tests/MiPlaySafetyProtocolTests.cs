@@ -1149,6 +1149,60 @@ public sealed class MiPlaySafetyProtocolTests
             MiPlayContinuityMediumType.Ble,
             MiPlayContinuityMediumTypes.GetMainMediumType(MiPlayContinuityMediumType.Ble));
     }
+
+    [Fact]
+    public void ContinuityStaticNetworkingTrustLevelsMirrorApkParserAndNotifyGate()
+    {
+        Assert.Equal(
+            MiPlayContinuityStaticNetworking.DefaultTrustGroupTrustLevel,
+            MiPlayContinuityStaticNetworking.ParseNetworkingServiceTrustLevel(null));
+        Assert.Equal(
+            MiPlayContinuityStaticNetworking.SameAccountTrustLevel,
+            MiPlayContinuityStaticNetworking.ParseNetworkingServiceTrustLevel("sameAccount"));
+        Assert.Equal(
+            MiPlayContinuityStaticNetworking.EveryOneTrustLevel,
+            MiPlayContinuityStaticNetworking.ParseNetworkingServiceTrustLevel("everyOne"));
+        Assert.Equal(
+            MiPlayContinuityStaticNetworking.SharedAccountTrustLevel,
+            MiPlayContinuityStaticNetworking.ParseNetworkingServiceTrustLevel("sharedAccount"));
+        Assert.Equal(
+            MiPlayContinuityStaticNetworking.DefaultTrustGroupTrustLevel,
+            MiPlayContinuityStaticNetworking.ParseNetworkingServiceTrustLevel("trustGroup"));
+        Assert.Equal(
+            MiPlayContinuityStaticNetworking.DefaultTrustGroupTrustLevel,
+            MiPlayContinuityStaticNetworking.ParseNetworkingServiceTrustLevel("unknown"));
+
+        Assert.True(MiPlayContinuityStaticNetworking.ShouldNotifyConnectionInitiated(
+            incomingConnectionTrustLevel: 16,
+            componentTrustLevel: 16));
+        Assert.True(MiPlayContinuityStaticNetworking.ShouldNotifyConnectionInitiated(
+            incomingConnectionTrustLevel: 32,
+            componentTrustLevel: 40));
+        Assert.False(MiPlayContinuityStaticNetworking.ShouldNotifyConnectionInitiated(
+            incomingConnectionTrustLevel: 48,
+            componentTrustLevel: 40));
+    }
+
+    [Fact]
+    public void ContinuityServerConnectionOptionsMirrorNativeRegisterNetbusFields()
+    {
+        var options = MiPlayContinuityServerConnectionOptions.ForRegisterNetbusListener(
+            MiPlayContinuityStaticNetworking.SameAccountTrustLevel);
+
+        Assert.Equal((MiPlayContinuityMediumType)0x40083, options.MediumMask);
+        Assert.True(options.ConfirmRequired);
+        Assert.Equal(MiPlayContinuityStaticNetworking.SameAccountTrustLevel, options.TrustLevel);
+    }
+
+    [Fact]
+    public void ContinuityNativeVtableEvidencePinsRegisterConnectionListenerSlot()
+    {
+        Assert.Equal(
+            MiPlayContinuityNativeVtableEvidence.RegisterConnectionListenerRelocationOffset,
+            MiPlayContinuityNativeVtableEvidence.RegisterNetbusListenerResolvedRelocationOffset);
+        Assert.Equal(0x94E278, MiPlayContinuityNativeVtableEvidence.RegisterConnectionListenerSymbolAddress);
+    }
+
     private static MiPlayPostAuthGetDeviceInfoPrerequisites CompletePostAuthGetDeviceInfoPrerequisites() =>
         new(
             MutualSafetyAuthVerified: true,
