@@ -1118,6 +1118,37 @@ public sealed class MiPlaySafetyProtocolTests
         Assert.Equal("pkg:", emptyName.ToMergedString());
     }
 
+    [Fact]
+    public void ContinuityMediumTypesMirrorApkConstantsAndNativeRegisterNetbusMask()
+    {
+        const MiPlayContinuityMediumType nativeMask =
+            MiPlayContinuityMediumTypes.RegisterNetbusListenerDefaultServerMediumMask;
+
+        Assert.Equal(0x1FFFFF, MiPlayContinuityMediumTypes.AllMediumTypesMask);
+        Assert.Equal((MiPlayContinuityMediumType)0x40083, nativeMask);
+        Assert.True(MiPlayContinuityMediumTypes.HasType(nativeMask, MiPlayContinuityMediumType.Bluetooth));
+        Assert.True(MiPlayContinuityMediumTypes.HasType(nativeMask, MiPlayContinuityMediumType.Ble));
+        Assert.True(MiPlayContinuityMediumTypes.HasType(nativeMask, MiPlayContinuityMediumType.WifiLan));
+        Assert.True(MiPlayContinuityMediumTypes.HasType(nativeMask, MiPlayContinuityMediumType.Remote));
+        Assert.False(MiPlayContinuityMediumTypes.HasType(nativeMask, MiPlayContinuityMediumType.WifiP2P));
+    }
+
+    [Fact]
+    public void ContinuityMediumTypesCollapseWlanFamilyLikeApkGetMainMediumType()
+    {
+        Assert.Equal(
+            MiPlayContinuityMediumType.WifiLan,
+            MiPlayContinuityMediumTypes.GetMainMediumType(MiPlayContinuityMediumType.WifiHotspot));
+        Assert.Equal(
+            MiPlayContinuityMediumType.WifiLan,
+            MiPlayContinuityMediumTypes.GetMainMediumType(MiPlayContinuityMediumType.WifiWlanOnP2P));
+        Assert.Equal(
+            MiPlayContinuityMediumType.WifiLan,
+            MiPlayContinuityMediumTypes.GetMainMediumType(MiPlayContinuityMediumType.WifiWlanOnWifiAware));
+        Assert.Equal(
+            MiPlayContinuityMediumType.Ble,
+            MiPlayContinuityMediumTypes.GetMainMediumType(MiPlayContinuityMediumType.Ble));
+    }
     private static MiPlayPostAuthGetDeviceInfoPrerequisites CompletePostAuthGetDeviceInfoPrerequisites() =>
         new(
             MutualSafetyAuthVerified: true,
