@@ -1062,6 +1062,62 @@ public sealed class MiPlaySafetyProtocolTests
         Assert.False(missingSequence.CanSend);
     }
 
+    [Fact]
+    public void ContinuityServiceNameModelsApkMergeStringShapes()
+    {
+        var packageQualified = new MiPlayContinuityServiceName(
+            "com.xiaomi.mi_connect_service",
+            "miplay-audio");
+        var packageLess = new MiPlayContinuityServiceName(
+            null,
+            "miplay-audio");
+
+        Assert.Equal("com.xiaomi.mi_connect_service:miplay-audio", packageQualified.ToMergedString());
+        Assert.Equal(":miplay-audio", packageLess.ToMergedString());
+
+        Assert.True(MiPlayContinuityServiceName.TryParseApkMergedString(
+            "miplay-audio",
+            out var parsedPackageLess));
+        Assert.NotNull(parsedPackageLess);
+        Assert.Null(parsedPackageLess.PackageName);
+        Assert.Equal("miplay-audio", parsedPackageLess.Name);
+        Assert.Equal(":miplay-audio", parsedPackageLess.ToMergedString());
+
+        Assert.True(MiPlayContinuityServiceName.TryParseApkMergedString(
+            ":miplay-audio",
+            out var parsedEmptyPackage));
+        Assert.NotNull(parsedEmptyPackage);
+        Assert.Equal(string.Empty, parsedEmptyPackage.PackageName);
+        Assert.Equal("miplay-audio", parsedEmptyPackage.Name);
+        Assert.Equal(":miplay-audio", parsedEmptyPackage.ToMergedString());
+    }
+
+    [Fact]
+    public void ContinuityServiceNamePreservesApkSplitQuirksAsStaticEvidence()
+    {
+        Assert.False(MiPlayContinuityServiceName.TryParseApkMergedString(null, out _));
+        Assert.False(MiPlayContinuityServiceName.TryParseApkMergedString(string.Empty, out _));
+        Assert.False(MiPlayContinuityServiceName.TryParseApkMergedString(":", out _));
+
+        Assert.True(MiPlayContinuityServiceName.TryParseApkMergedString("pkg:", out var trailingColon));
+        Assert.NotNull(trailingColon);
+        Assert.Null(trailingColon.PackageName);
+        Assert.Equal("pkg", trailingColon.Name);
+        Assert.Equal(":pkg", trailingColon.ToMergedString());
+
+        Assert.True(MiPlayContinuityServiceName.TryParseApkMergedString("pkg:name:ignored", out var nested));
+        Assert.NotNull(nested);
+        Assert.Equal("pkg", nested.PackageName);
+        Assert.Equal("name", nested.Name);
+        Assert.Equal("pkg:name", nested.ToMergedString());
+
+        Assert.True(MiPlayContinuityServiceName.TryParseApkMergedString("pkg::ignored", out var emptyName));
+        Assert.NotNull(emptyName);
+        Assert.Equal("pkg", emptyName.PackageName);
+        Assert.Equal(string.Empty, emptyName.Name);
+        Assert.Equal("pkg:", emptyName.ToMergedString());
+    }
+
     private static MiPlayPostAuthGetDeviceInfoPrerequisites CompletePostAuthGetDeviceInfoPrerequisites() =>
         new(
             MutualSafetyAuthVerified: true,

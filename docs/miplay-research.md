@@ -577,3 +577,17 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 下一阶段可以在认证完成条件之上继续研究最小、可逆、无媒体的认证后状态边界，例如只观察 keepalive/reaper 相关帧或静态确认第一个 post-auth 控制入口；仍不得直接发送播放、RTSP、音频或 openDevice 等业务控制，直到对应帧结构和回滚边界被静态证据与单测闭环。
 
 所有后续记录都应区分“实测”“静态确认”和“推断”，并在新证据推翻旧结论时保留本节的更正。
+
+#### 2026-07-20 Continuity ServiceName 与 NetBus getDeviceInfo 离线模型
+
+在 `com.xiaomi.mi_connect_service` 5.1.251.10 的 Java 层继续追踪后，`DealSafetyDone`、`cmdSessionSuccess` 和旧版 `MiplaySessionCallbackProxy` 符号仍未出现在本 APK 的 jadx 结果中；本样本暴露的是 Continuity/NetBus Binder 服务，而不是旧版 MiPlayAudioService 的 legacy 8899 Java 回调层。可闭环的静态证据如下：
+
+1. `com.xiaomi.continuity.ServiceName` 只有 `packageName` 与 `name` 两个字段；`toMergeString()` 在 `packageName == null` 时输出 `":" + name`，否则输出 `packageName + ":" + name`。
+2. `ServiceName.parse(String)` 使用 Java 默认 `split(":")`，会丢弃尾部空段，且 decompiled 代码没有显式拒绝第三段：`"pkg:"` 会按单字段解析为 `name="pkg"`，`"pkg:name:ignored"` 会保留前两段并忽略后续段。这说明它适合作为“官方 API 形状”的离线诊断证据，不适合作为我们向 S12 发送任何内容的校验器。
+3. `ContinuityConnectionManagerService.registerChannelListenerV2(...)` 的必要上下文不是裸 TCP：它读取 Binder `callingUid/callingPid`，校验 `BIND_CONTINUITY_SERVICE_INTERNAL`，调用 `PackageUtil.generateAppInfo(context, uid, pid, invokePkg)`，创建 `ChannelListenerServerProxy`，写入 `mServiceListeners`，然后把 `serviceName.toMergeString()`、`AppInfo`、`ServerChannelOptionsV2` 和 listener proxy 交给 `nativeRegisterChannelListener(...)`。
+4. `PackageUtil.generateAppInfo(...)` 会把调用方包名/签名/`platformType=1`/flags 组成 `AppInfo`；当前 Windows Probe 没有 Android Binder UID、包签名或 Continuity 权限上下文。
+5. APK 中的 `getDeviceInfo` 位于 `com.xiaomi.continuity.netbus.service.DeviceService`：`getDeviceInfo(deviceId, receiver)` 直接调用 `DeviceManagerNative.nativeGetDeviceInfo(Binder.getCallingUid(), deviceId)` 并通过 `ResultReceiver` 返回；`AsyncResult` 的 `onSuccess` 只是 NetBus 异步结果分发器，不是 legacy 8899 `0x001e` 的 Java listener 链。
+
+项目新增 `MiPlayContinuityServiceName` 作为纯离线模型，复刻上述 `parse/toMergeString` 形状并用单测固定边界。这个模型不被 Probe 调用，不注册 listener，不创建 channel，也不会改变任何网络发送行为。由此得到的可测假设是：当前 S12 上 `0x001e` 无响应更可能来自 legacy 8899 命令会话缺少 post-auth listener/source-device 状态，或该固件根本不把 NetBus `DeviceService.getDeviceInfo` 映射到 8899 `0x001e`；仅凭完成 SafetyAuth 继续重复发送 `0x001e` 不会补齐 Binder AppInfo、ServiceName、listener proxy 或 native channel registration。
+
+本轮没有执行任何网络操作。新增离线测试把该结论固定为 Continuity `ServiceName` 形状与 split 行为；下一步优先继续静态追踪 native `libmicontinuity.so` 中 `nativeRegisterChannelListener` 到 miplay-audio service/channel 的符号和字符串，而不是再次实机复验。
