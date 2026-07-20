@@ -591,3 +591,23 @@ Lyra 会话使用的 `authKey`、`streamKey`、`streamIV` 均为每会话随机�
 项目新增 `MiPlayContinuityServiceName` 作为纯离线模型，复刻上述 `parse/toMergeString` 形状并用单测固定边界。这个模型不被 Probe 调用，不注册 listener，不创建 channel，也不会改变任何网络发送行为。由此得到的可测假设是：当前 S12 上 `0x001e` 无响应更可能来自 legacy 8899 命令会话缺少 post-auth listener/source-device 状态，或该固件根本不把 NetBus `DeviceService.getDeviceInfo` 映射到 8899 `0x001e`；仅凭完成 SafetyAuth 继续重复发送 `0x001e` 不会补齐 Binder AppInfo、ServiceName、listener proxy 或 native channel registration。
 
 本轮没有执行任何网络操作。新增离线测试把该结论固定为 Continuity `ServiceName` 形状与 split 行为；下一步优先继续静态追踪 native `libmicontinuity.so` 中 `nativeRegisterChannelListener` 到 miplay-audio service/channel 的符号和字符串，而不是再次实机复验。
+
+#### 2026-07-20 native Continuity channel / NetBus device-info 入口复核
+
+本轮继续仅离线读取 `artifacts/apk-static/mi-connect-5.1.251.10-native/` 中的 ARM64 ELF 符号和小段反汇编，没有进行任何网络访问。`llvm-nm -D --demangle libmicontinuity.so` 与 `llvm-objdump -d --demangle` 给出以下可复现证据：
+
+- Java `ContinuityConnectionManagerNative.nativeRegisterChannelListener(...)` 对应 JNI 符号地址 `0x89d5b8`。反汇编显示它先把 Java `String` 转为 std::string，再调用 `JniAppInfo::JavaToNative`、`JniServerChannelOptions::JavaToNative`、`JniChannelContext::CreateServerContext`，并通过 `JniChannelListener::AddServerChannelListener(context, serviceName)` 暂存 server listener；随后调用 `RegisterChannelListener@plt`，失败时调用 `JniChannelListener::RevertServerChannelListener`，成功/清理路径调用 `DeleteStoreServerChannelListener`。
+- C 导出 `RegisterChannelListener` 位于 `0x7d0c18`，C++ 实现 `unified::api::UnifiedImpl::RegisterChannelListener(char const*, AppInfo const*, ServerChannelOptions const*, ChannelListener const*)` 位于 `0x7dcf7c`。同一动态符号表还暴露 `lyra::continuity::channel::ChannelImpl::RegisterChannelListener(...)`、`ChannelManager::RegisterChannelListener(...)`、`ChannelServer::RegisterChannelListener(...)` 以及 miwear/hetero channel 的对应实现。
+- Java `DeviceManagerNative.nativeGetDeviceInfo(...)` 对应 JNI 符号地址 `0x882550`。反汇编显示它把 Java deviceId 字符串转 native 后直接调用 `GetDeviceInfo@plt`，成功时通过 `JniDeviceInfoV2::NativeToJava` 和 `JniResult::Create(JNIEnv, jobject)` 回到 Java。
+- C 导出 `GetDeviceInfo` 位于 `0x7d0454`，C++ 实现 `unified::api::UnifiedImpl::GetDeviceInfo(unsigned int, char const*, DeviceInfo*)` 位于 `0x7d58d0`；底层还存在 `lyra::continuity::networking::DeviceManager::GetDeviceInfo(...)`、`SyncManagerImpl::GetDeviceInfo(...)` 与 `lyra::netbus::device::DeviceManagerWrapper::GetDeviceInfo(...)`。
+- `libidmservicemgr.so` 的字符串表包含 `urn:aiot-spec-v3:com.mi.idm:service:miplay-audio:00017803:1.0`，说明 miplay-audio 是 IDM/ServiceManager service type；而 channel 注册入口接收的是 `ServiceName.toMergeString()` 形成的业务 serviceName 字符串和 Android `AppInfo`，不是裸 TCP 8899 命令号。
+- Java `ChannelInfoV2` 会把 native 返回的 serviceName 字符串经 `ServiceName.parse(...)` 写回对象，并携带 `channelId`、`peerChannelId`、`deviceId`、`address`、`port`、`channelRole`、`isSdkSocket`、`localAddress` 和可空 `transKey`。`ContinuityConnectionManagerService.ChannelListenerServerProxy.onChannelCreated(...)` 调用 Java listener 后立刻 `channelInfoV2.WipeTransKey()`，说明成功建链事件中存在一次性传递/擦除的信任材料或传输密钥字段。
+
+由此，SafetyAuth 成功后到 `getDeviceInfo` 的缺口进一步收敛为两个不应混淆的状态机：
+
+```text
+legacy 8899: TCP session -> SafetyAuth mutual auth -> encrypted 0x001e? -> observed no 0x001f
+Continuity: Binder caller identity -> AppInfo/signature -> ServerChannelOptions/BusinessProfile -> nativeRegisterChannelListener -> JniChannelListener callbacks -> ChannelInfoV2/transKey -> NetBus DeviceService.getDeviceInfo
+```
+
+可测假设更新：当前 Probe 尚未复原的不是单个 `0x001e` payload 字段，而是 Android Continuity 的调用方身份、channel listener 注册、server channel options / business profile、channel created/confirm 回调时序，以及可能只在 channel 回调中短暂暴露的 `transKey`/channel context。因此在没有这些 native/Java 状态证据闭环前，不值得做新的受限 S12 复验；下一步继续离线追 `ChannelImpl::RegisterChannelListener` / `ChannelServer::RegisterChannelListener` 的分派条件，以及 miplay-audio 在 ServiceManager/Networking service map 中如何绑定到业务 package/serviceName。
