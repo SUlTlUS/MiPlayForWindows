@@ -85,6 +85,59 @@ public sealed class MiPlayDiagnosticsTests
     }
 
     [Fact]
+    public void ParsesNativeIdmMiplayAudioServiceTypeAsServiceManagerUrn()
+    {
+        Assert.True(MiPlayIdmServiceType.TryParse(
+            MiPlayMdnsCapabilities.MiPlayAudioServiceType,
+            out var serviceType));
+        Assert.NotNull(serviceType);
+        Assert.True(serviceType.HasVendorNamespace);
+        Assert.Equal(MiPlayIdmServiceTypes.XiaomiIdmVendorNamespace, serviceType.VendorNamespace);
+        Assert.Equal(MiPlayIdmServiceTypes.MiPlayAudioServiceName, serviceType.ServiceName);
+        Assert.Equal(MiPlayIdmServiceTypes.MiPlayAudioTypeId, serviceType.TypeId);
+        Assert.Equal(MiPlayIdmServiceTypes.MiPlayAudioVersion, serviceType.Version);
+        Assert.Equal(MiPlayMdnsCapabilities.MiPlayAudioServiceType, serviceType.ToUrn());
+        Assert.Equal(MiPlayMdnsCapabilities.MiPlayAudioServiceType, MiPlayIdmServiceTypes.MiPlayAudioUrn);
+    }
+
+    [Fact]
+    public void NativeIdmServiceTypeTableKeepsMiplayAudioAdjacentToIdmServiceTypes()
+    {
+        var serviceNames = MiPlayIdmServiceTypes.ObservedServiceTypeIdsTable
+            .Select(value =>
+            {
+                Assert.True(MiPlayIdmServiceType.TryParse(value, out var parsed));
+                Assert.NotNull(parsed);
+                return parsed.ServiceName;
+            })
+            .ToArray();
+
+        Assert.Equal(
+            [
+                "multi-screen-collaboration",
+                "micast-tv",
+                "miplay-audio",
+                "input",
+                "handoff",
+                "idm-test",
+                "notification-local",
+                "mihome-hub",
+                "milink",
+            ],
+            serviceNames);
+        Assert.Equal(2, Array.IndexOf(serviceNames, MiPlayIdmServiceTypes.MiPlayAudioServiceName));
+    }
+
+    [Fact]
+    public void IdmServiceTypeParserRejectsContinuityServiceNamesAndMalformedTypeIds()
+    {
+        Assert.False(MiPlayIdmServiceType.TryParse("com.xiaomi.mi_connect_service:miplay-audio", out _));
+        Assert.False(MiPlayIdmServiceType.TryParse(":miplay-audio", out _));
+        Assert.False(MiPlayIdmServiceType.TryParse("urn:aiot-spec-v3:service:miplay-audio:17803:1.0", out _));
+        Assert.False(MiPlayIdmServiceType.TryParse("urn:aiot-spec-v3:com.mi.idm:miplay-audio:00017803:1.0", out _));
+    }
+
+    [Fact]
     public void ExtractsAppFivePayloadFromObservedMdnsContainer()
     {
         const string value = "gQBmBIMiwyjRJ2sbwgAAAAAAAAAAAAAAAAAAAAAAewoJIm1pY28iOiB7CgkJImRldmljZV9pZCI6ICJkYjFlYTA2Mi03NTYzLTQ2MDQtODM0OS1kYWM2MDUzMDNhNWUiIAoJfSAKfSAK";
