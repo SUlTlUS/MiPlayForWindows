@@ -1,8 +1,10 @@
+using System.Runtime.InteropServices;
+using DLNACast.Core.Localization;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Windows.Graphics;
 using WinRT.Interop;
 
@@ -10,27 +12,30 @@ namespace DLNACast.App;
 
 internal sealed class TrayMenuWindow : Microsoft.UI.Xaml.Window
 {
-    private const int MenuWidth = 244;
-    private const int MenuHeight = 176;
+    private const int HostSize = 2;
     private readonly Action _showMainWindow;
     private readonly Func<Task> _stopCasting;
     private readonly Func<Task> _exitApplication;
+    private readonly Grid _anchor;
+    private readonly MenuFlyout _menu;
+    private readonly IntPtr _windowHandle;
     private readonly AppWindow _appWindow;
-    private bool _showing;
 
     public TrayMenuWindow(Action showMainWindow, Func<Task> stopCasting, Func<Task> exitApplication)
     {
         _showMainWindow = showMainWindow;
         _stopCasting = stopCasting;
         _exitApplication = exitApplication;
-        Content = CreateContent();
-        SystemBackdrop = new DesktopAcrylicBackdrop();
 
-        var windowHandle = WindowNative.GetWindowHandle(this);
-        var windowId = Win32Interop.GetWindowIdFromWindow(windowHandle);
+        Title = SystemLanguage.Select("DLNA Cast 托盘菜单宿主", "DLNA Cast tray menu host");
+        _anchor = new Grid();
+        Content = _anchor;
+
+        _windowHandle = WindowNative.GetWindowHandle(this);
+        var windowId = Win32Interop.GetWindowIdFromWindow(_windowHandle);
         _appWindow = AppWindow.GetFromWindowId(windowId);
         _appWindow.IsShownInSwitchers = false;
-        _appWindow.Resize(new SizeInt32(MenuWidth, MenuHeight));
+        _appWindow.Resize(new SizeInt32(HostSize, HostSize));
         if (_appWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(false, false);
@@ -40,82 +45,94 @@ internal sealed class TrayMenuWindow : Microsoft.UI.Xaml.Window
             presenter.IsAlwaysOnTop = true;
         }
 
-        Activated += (_, args) =>
-        {
-            if (_showing && args.WindowActivationState == WindowActivationState.Deactivated)
-            {
-                Hide();
-            }
-        };
+        _menu = CreateMenu();
+        _menu.Opened += (_, _) => MakeHostWindowInvisible(_windowHandle);
+        _menu.Closed += (_, _) => _appWindow.Hide();
     }
 
-    private UIElement CreateContent()
+    private MenuFlyout CreateMenu()
     {
-        var panel = new StackPanel { Spacing = 4 };
-        panel.Children.Add(CreateButton("打开 DLNA Cast", "\uE8A7", (_, _) =>
+        var menu = new MenuFlyout
         {
-            Hide();
-            _showMainWindow();
-        }));
-        panel.Children.Add(CreateButton("停止投送", "\uE71A", async (_, _) =>
-        {
-            await _stopCasting();
-            Hide();
-        }));
-        panel.Children.Add(new Border
-        {
-            Height = 1,
-            Margin = new Thickness(8, 5, 8, 5),
-            Background = new SolidColorBrush(Colors.Gray) { Opacity = 0.35 }
-        });
-        panel.Children.Add(CreateButton("退出", "\uE8BB", async (_, _) => await _exitApplication()));
-
-        return new Border
-        {
-            Padding = new Thickness(10),
-            CornerRadius = new CornerRadius(12),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(235, 28, 33, 43)),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(72, 255, 255, 255)),
-            BorderThickness = new Thickness(1),
-            Child = panel
+            Placement = FlyoutPlacementMode.TopEdgeAlignedRight
         };
+
+        menu.Items.Add(CreateMenuItem(
+            SystemLanguage.Select("打开 DLNA Cast", "Open DLNA Cast"),
+            "\uE8A7",
+            (_, _) => _showMainWindow()));
+        menu.Items.Add(CreateMenuItem(
+            SystemLanguage.Select("停止投送", "Stop casting"),
+            "\uE71A",
+            async (_, _) => await _stopCasting()));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(CreateMenuItem(
+            SystemLanguage.Select("退出", "Exit"),
+            "\uE8BB",
+            async (_, _) => await _exitApplication()));
+        return menu;
     }
 
-    private static Button CreateButton(string text, string glyph, RoutedEventHandler click)
+    private static MenuFlyoutItem CreateMenuItem(string text, string glyph, RoutedEventHandler click)
     {
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        content.Children.Add(new FontIcon { Glyph = glyph, FontSize = 16, Width = 22 });
-        content.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
-        var button = new Button
+        var item = new MenuFlyoutItem
         {
-            Content = content,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(12, 8, 12, 8)
+            Text = text,
+            Icon = new FontIcon { Glyph = glyph }
         };
-        button.Click += click;
-        return button;
+        item.Click += click;
+        return item;
     }
 
     public void ShowAt(int cursorX, int cursorY)
     {
+        if (_menu.IsOpen)
+        {
+            _menu.Hide();
+        }
+
         var point = new PointInt32(cursorX, cursorY);
-        var display = DisplayArea.GetFromPoint(point, DisplayAreaFallback.Nearest);
-        var workArea = display.WorkArea;
-        var x = Math.Clamp(cursorX - MenuWidth, workArea.X, workArea.X + workArea.Width - MenuWidth);
-        var y = Math.Clamp(cursorY - MenuHeight, workArea.Y, workArea.Y + workArea.Height - MenuHeight);
-        _appWindow.MoveAndResize(new RectInt32(x, y, MenuWidth, MenuHeight));
-        _showing = true;
+        var workArea = DisplayArea.GetFromPoint(point, DisplayAreaFallback.Nearest).WorkArea;
+        var x = Math.Clamp(cursorX - HostSize, workArea.X, workArea.X + workArea.Width - HostSize);
+        var y = Math.Clamp(cursorY - HostSize, workArea.Y, workArea.Y + workArea.Height - HostSize);
+
+        _ = SetWindowRgn(_windowHandle, IntPtr.Zero, true);
+        _appWindow.MoveAndResize(new RectInt32(x, y, HostSize, HostSize));
         _appWindow.Show();
         Activate();
+        _menu.ShowAt(_anchor, new FlyoutShowOptions
+        {
+            Placement = FlyoutPlacementMode.TopEdgeAlignedRight,
+            ShowMode = FlyoutShowMode.Standard
+        });
     }
 
-    private void Hide()
+    private static void MakeHostWindowInvisible(IntPtr windowHandle)
     {
-        _showing = false;
-        _appWindow.Hide();
+        var emptyRegion = CreateRectRgn(0, 0, 0, 0);
+        if (emptyRegion == IntPtr.Zero)
+        {
+            throw new InvalidOperationException(SystemLanguage.Select(
+                "无法创建托盘菜单宿主窗口区域。",
+                "Unable to create the tray menu host window region."));
+        }
+
+        if (SetWindowRgn(windowHandle, emptyRegion, true) == 0)
+        {
+            _ = DeleteObject(emptyRegion);
+            throw new InvalidOperationException(SystemLanguage.Select(
+                "无法隐藏托盘菜单宿主窗口。",
+                "Unable to hide the tray menu host window."));
+        }
     }
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowRgn(IntPtr windowHandle, IntPtr region, bool redraw);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(IntPtr graphicsObject);
 }

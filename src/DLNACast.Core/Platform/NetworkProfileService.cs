@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using DLNACast.Core.Localization;
 
 namespace DLNACast.Core.Platform;
 
@@ -33,17 +34,23 @@ public sealed class NetworkProfileService
             var privateNetwork = connected.FirstOrDefault(item => item.Category is 1 or 2);
             if (!string.IsNullOrWhiteSpace(privateNetwork.Name))
             {
-                return new NetworkProfileStatus(true, $"专用网络：{privateNetwork.Name}");
+                return new NetworkProfileStatus(true, SystemLanguage.Select(
+                    $"专用网络：{privateNetwork.Name}",
+                    $"Private network: {privateNetwork.Name}"));
             }
 
-            var names = string.Join("、", connected.Select(item => item.Name).Where(name => !string.IsNullOrWhiteSpace(name)));
+            var names = string.Join(
+                SystemLanguage.Select("、", ", "),
+                connected.Select(item => item.Name).Where(name => !string.IsNullOrWhiteSpace(name)));
             return new NetworkProfileStatus(false, string.IsNullOrWhiteSpace(names)
-                ? "没有检测到已连接的专用网络"
-                : $"当前网络为公用：{names}");
+                ? SystemLanguage.Select("没有检测到已连接的专用网络", "No connected Private network was detected")
+                : SystemLanguage.Select($"当前网络为公用：{names}", $"Current network is Public: {names}"));
         }
         catch (Exception ex)
         {
-            return new NetworkProfileStatus(false, $"无法确认专用网络：{ex.Message}");
+            return new NetworkProfileStatus(false, SystemLanguage.Select(
+                $"无法确认专用网络：{ex.Message}",
+                $"Unable to verify the Private network: {ex.Message}"));
         }
         finally
         {
@@ -54,4 +61,3 @@ public sealed class NetworkProfileService
         }
     }
 }
-

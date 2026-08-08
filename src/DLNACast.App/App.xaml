@@ -4,16 +4,77 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
         <ResourceDictionary>
-            <SolidColorBrush x:Key="BrandBrush" Color="#4F7CFF" />
-            <SolidColorBrush x:Key="CardBrush" Color="#CC1B2230" />
-            <SolidColorBrush x:Key="CardBorderBrush" Color="#3DFFFFFF" />
-            <SolidColorBrush x:Key="MutedTextBrush" Color="#A8B3C7" />
-            <Style TargetType="Button">
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="BrandBrush" Color="#0F6CBD" />
+                    <SolidColorBrush x:Key="BrandSubtleBrush" Color="#E8F2FB" />
+                    <SolidColorBrush x:Key="BrandTextBrush" Color="#0F5A9D" />
+                    <SolidColorBrush x:Key="CardBrush" Color="#CCFFFFFF" />
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#14000000" />
+                    <SolidColorBrush x:Key="MutedTextBrush" Color="#99000000" />
+                    <SolidColorBrush x:Key="SubtleSurfaceBrush" Color="#08000000" />
+                    <SolidColorBrush x:Key="BottomBarBrush" Color="#F7FFFFFF" />
+                    <SolidColorBrush x:Key="NetworkSurfaceBrush" Color="#EAF3FF" />
+                    <SolidColorBrush x:Key="NetworkBorderBrush" Color="#3375A7FF" />
+                    <SolidColorBrush x:Key="ErrorTextBrush" Color="#C42B1C" />
+                    <SolidColorBrush x:Key="StatusDotBrush" Color="#0F7B0F" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="BrandBrush" Color="#0F6CBD" />
+                    <SolidColorBrush x:Key="BrandSubtleBrush" Color="#26384A" />
+                    <SolidColorBrush x:Key="BrandTextBrush" Color="#60CDFF" />
+                    <SolidColorBrush x:Key="CardBrush" Color="#B3262626" />
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#18FFFFFF" />
+                    <SolidColorBrush x:Key="MutedTextBrush" Color="#A8FFFFFF" />
+                    <SolidColorBrush x:Key="SubtleSurfaceBrush" Color="#0FFFFFFF" />
+                    <SolidColorBrush x:Key="BottomBarBrush" Color="#F21F1F1F" />
+                    <SolidColorBrush x:Key="NetworkSurfaceBrush" Color="#242D3F55" />
+                    <SolidColorBrush x:Key="NetworkBorderBrush" Color="#44669BD4" />
+                    <SolidColorBrush x:Key="ErrorTextBrush" Color="#FF99A4" />
+                    <SolidColorBrush x:Key="StatusDotBrush" Color="#6CCB5F" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="BrandBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+                    <SolidColorBrush x:Key="BrandSubtleBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="BrandTextBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+                    <SolidColorBrush x:Key="CardBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="MutedTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="SubtleSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="BottomBarBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="NetworkSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="NetworkBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="ErrorTextBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+                    <SolidColorBrush x:Key="StatusDotBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
+            <CornerRadius x:Key="ControlCornerRadius">4</CornerRadius>
+            <CornerRadius x:Key="OverlayCornerRadius">8</CornerRadius>
+
+            <Style x:Key="AppCardStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}" />
+                <Setter Property="Padding" Value="20" />
+            </Style>
+            <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+            <Style x:Key="SecondaryTextStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource MutedTextBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+            <Style TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
                 <Setter Property="MinHeight" Value="40" />
                 <Setter Property="Padding" Value="16,8" />
-                <Setter Property="CornerRadius" Value="8" />
             </Style>
-            <Style TargetType="ComboBox">
+            <Style TargetType="ComboBox" BasedOn="{StaticResource DefaultComboBoxStyle}">
                 <Setter Property="MinHeight" Value="40" />
                 <Setter Property="Padding" Value="10,4" />
             </Style>

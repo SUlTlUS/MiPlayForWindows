@@ -39,12 +39,13 @@ public sealed class MiPlayProtocolTests
 
         var bytes = request.ToCommandFrame(sequence: 0x1234);
         var payload = "wfd://192.168.31.8:7236?mirrorMode=1";
+        var wirePayload = payload + "\0";
 
         Assert.Equal(0x24, bytes[0]);
         Assert.Equal(0, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(1, 2)));
         Assert.Equal(0x1234, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(3, 2)));
-        Assert.Equal((uint)payload.Length, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(5, 4)));
-        Assert.Equal(payload, Encoding.UTF8.GetString(bytes, 9, payload.Length));
+        Assert.Equal((uint)wirePayload.Length, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(5, 4)));
+        Assert.Equal(wirePayload, Encoding.UTF8.GetString(bytes, 9, wirePayload.Length));
     }
 
     [Fact]
@@ -170,6 +171,30 @@ public sealed class MiPlayProtocolTests
     }
 
     [Fact]
+    public void DecodesCompoundFirstAudioPcmNotificationFromApplicationRun()
+    {
+        var payload = Convert.FromHexString(
+            "0E66697273742D617564696F70636D0301" +
+            "1A66697273742D617564696F70636D2D6275666665722D74696D650600000000");
+
+        var decoded = MiPlayNotifyPayloadCodec.TryDecode(
+            payload,
+            out var notify,
+            out var bytesConsumed);
+
+        Assert.True(decoded);
+        Assert.NotNull(notify);
+        Assert.Equal(payload.Length, bytesConsumed);
+        Assert.Equal("first-audiopcm", notify.Label);
+        Assert.Equal(1, notify.IntegerValue);
+        var bufferTime = Assert.Single(notify.Fields);
+        Assert.Equal("first-audiopcm-buffer-time", bufferTime.Name);
+        Assert.Equal(MiPlayNotifyPayloadCodec.UnsignedInt32ValueType, bufferTime.ValueType);
+        Assert.Equal(0, bufferTime.IntegerValue);
+        Assert.Null(bufferTime.StringValue);
+    }
+
+    [Fact]
     public void RejectsTruncatedMiPlayNotifyPayload()
     {
         var malformed = Convert.FromHexString("0B6D65646961496E666F4578160000009C02696414");
@@ -278,6 +303,7 @@ public sealed class MiPlayProtocolTests
     {
         Assert.Equal(TimeSpan.FromMilliseconds(800), TimeSpan.FromMicroseconds(MiPlayProtocolConstants.FiveGigahertzPlaybackDelayMicroseconds));
         Assert.Equal(TimeSpan.FromSeconds(1), TimeSpan.FromMicroseconds(MiPlayProtocolConstants.OtherNetworkPlaybackDelayMicroseconds));
+        Assert.Equal(TimeSpan.Zero, TimeSpan.FromMicroseconds(MiPlayProtocolConstants.SystemAudioPlaybackDelayMicroseconds));
     }
 
     [Theory]
@@ -373,6 +399,44 @@ public sealed class MiPlayProtocolTests
             timestamp: 2,
             synchronizationSource: 3,
             new byte[MiPlayRtpPacketCodec.MaximumMpegTsPayloadLength + MiPlayProtocolConstants.MpegTsPacketLength]));
+    }
+
+    [Fact]
+    public void WfdMediaFrameUsesDollarAndTwentyFourBitBigEndianLength()
+    {
+        var rtp = Enumerable.Range(0, 1_328).Select(value => (byte)value).ToArray();
+
+        var frame = MiPlayWfdInterleavedFrameCodec.Encode(rtp);
+
+        Assert.Equal(1_332, frame.Length);
+        Assert.Equal((byte)'$', frame[0]);
+        Assert.Equal(0x00, frame[1]);
+        Assert.Equal(0x05, frame[2]);
+        Assert.Equal(0x30, frame[3]);
+        Assert.True(MiPlayWfdInterleavedFrameCodec.TryDecode(frame, out var decoded, out var consumed));
+        Assert.Equal(frame.Length, consumed);
+        Assert.Equal(rtp, decoded);
+    }
+
+    [Fact]
+    public void WfdTimerResponseMatchesTheFirstCapturedPhoneReply()
+    {
+        var request = Convert.FromHexString(
+            "D6DC80A9000000000000000000000000000000000000000000000000000000000100000000000000");
+        var expected = Convert.FromHexString(
+            "D6DC80A9000000000000000000000000BDE71A3E02000000BDE71A3E020000000100000000000000");
+
+        var decoded = MiPlayWfdTimerPacketCodec.Decode(request);
+        var response = MiPlayWfdTimerPacketCodec.CreateResponse(
+            request,
+            sourceReceiveTimestamp: 9_631_885_245,
+            sourceSendTimestamp: 9_631_885_245);
+
+        Assert.Equal(2_843_794_646UL, decoded.RemoteTimestamp0);
+        Assert.Equal(0UL, decoded.RemoteTimestamp1);
+        Assert.Equal(1U, decoded.Sequence);
+        Assert.Equal(0U, decoded.Reserved);
+        Assert.Equal(expected, response);
     }
 
     [Fact]

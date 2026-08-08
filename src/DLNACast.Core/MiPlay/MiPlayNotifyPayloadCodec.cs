@@ -11,6 +11,7 @@ namespace DLNACast.Core.MiPlay;
 public static class MiPlayNotifyPayloadCodec
 {
     public const byte ByteValueType = 0x03;
+    public const byte UnsignedInt32ValueType = 0x06;
     public const byte StringValueType = 0x14;
     public const byte ObjectValueType = 0x16;
 
@@ -36,13 +37,26 @@ public static class MiPlayNotifyPayloadCodec
                 return false;
             }
 
+            var integerValue = payload[offset++];
+            var scalarFields = new List<MiPlayNotifyField>();
+            while (offset < payload.Length)
+            {
+                if (!TryReadField(payload[offset..], out var field, out var fieldBytesConsumed) ||
+                    fieldBytesConsumed <= 0)
+                {
+                    return false;
+                }
+                scalarFields.Add(field);
+                offset += fieldBytesConsumed;
+            }
+
             notify = new MiPlayNotifyPayload(
                 label,
                 valueType,
-                IntegerValue: payload[offset],
+                IntegerValue: integerValue,
                 DeclaredPayloadLength: null,
-                Fields: []);
-            bytesConsumed = offset + 1;
+                Fields: scalarFields);
+            bytesConsumed = offset;
             return true;
         }
 
@@ -118,6 +132,27 @@ public static class MiPlayNotifyPayloadCodec
                 IntegerValue: payload[offset],
                 DeclaredPayloadLength: null);
             bytesConsumed = offset + 1;
+            return true;
+        }
+
+        if (valueType == UnsignedInt32ValueType)
+        {
+            if (payload.Length < offset + sizeof(uint))
+            {
+                return false;
+            }
+            var uint32Value = BinaryPrimitives.ReadUInt32BigEndian(payload.Slice(offset, sizeof(uint)));
+            if (uint32Value > int.MaxValue)
+            {
+                return false;
+            }
+            field = new MiPlayNotifyField(
+                name,
+                valueType,
+                StringValue: null,
+                IntegerValue: (int)uint32Value,
+                DeclaredPayloadLength: sizeof(uint));
+            bytesConsumed = offset + sizeof(uint);
             return true;
         }
 

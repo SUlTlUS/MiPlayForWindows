@@ -28,7 +28,11 @@ public sealed record MiPlayOpenDeviceRequest(IPAddress SenderAddress, int MediaP
             $"wfd://{SenderAddress}:{MediaPort}?mirrorMode={MirrorMode}");
     }
 
-    public byte[] ToPayloadBytes() => Encoding.UTF8.GetBytes(ToPayloadText());
+    /// <summary>
+    /// Returns the command payload exactly as emitted by the rooted legacy
+    /// MiPlay source: the UTF-8 WFD URL followed by one NUL terminator.
+    /// </summary>
+    public byte[] ToPayloadBytes() => Encoding.UTF8.GetBytes(ToPayloadText() + "\0");
 
     /// <summary>
     /// Builds the raw command frame used before SafetyData is installed. Native post-auth

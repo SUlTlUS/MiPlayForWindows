@@ -232,6 +232,7 @@ public sealed class MiPlaySafetyProtocolTests
             out var deviceVersion));
         Assert.Equal((ushort)1, acknowledgementSequence);
         Assert.Equal("2.1.5091615", deviceVersion);
+        Assert.NotEqual(MiPlayLx06MpasReceiverEvidence.CurrentObservedLx06Version, deviceVersion);
     }
 
     [Fact]
@@ -264,7 +265,8 @@ public sealed class MiPlaySafetyProtocolTests
             "000701E00200ECAE89F6CB0DD35E2CB4FD408221777435A6E936DFDC3852CD3AA9757CFBE03675611671BF743FA3D6E0D9DBB0091E0A740C140D84A436B97DE4AA88A3252D54B6F1CF");
 
         Assert.Equal(0x89AEEC00u, MiPlaySafetyDataCodec.ComputeCrc32Mpeg2(receivedSafetyData.AsSpan(9)));
-        Assert.Equal(0x89AEEC00u, BinaryPrimitives.ReadUInt32LittleEndian(receivedSafetyData.AsSpan(5, sizeof(uint))));
+        Assert.Equal(0x00ECAE89u, MiPlaySafetyDataCodec.ComputeNativeWireIntegrityValue(receivedSafetyData.AsSpan(9)));
+        Assert.Equal(0x00ECAE89u, BinaryPrimitives.ReadUInt32BigEndian(receivedSafetyData.AsSpan(5, sizeof(uint))));
     }
 
     [Fact]
@@ -638,9 +640,9 @@ public sealed class MiPlaySafetyProtocolTests
         var corruptedSecondFrameData = secondFrameData.ToArray();
         corruptedSecondFrameData[^1] ^= 0x80;
         var corruptedCiphertext = corruptedSecondFrameData.AsSpan(9);
-        BinaryPrimitives.WriteUInt32LittleEndian(
+        BinaryPrimitives.WriteUInt32BigEndian(
             corruptedSecondFrameData.AsSpan(5, sizeof(uint)),
-            MiPlaySafetyDataCodec.ComputeCrc32Mpeg2(corruptedCiphertext));
+            MiPlaySafetyDataCodec.ComputeNativeWireIntegrityValue(corruptedCiphertext));
 
         var receiver = new MiPlaySafetyDataSessionCipher(key, iv);
 
@@ -705,8 +707,11 @@ public sealed class MiPlaySafetyProtocolTests
         Assert.NotNull(header);
         Assert.Equal((byte)9, header.PaddingLength);
         Assert.Equal(
-            MiPlaySafetyDataCodec.ComputeCrc32Mpeg2(encoded.AsSpan(header.PayloadOffset)),
-            BinaryPrimitives.ReadUInt32LittleEndian(encoded.AsSpan(5, sizeof(uint))));
+            MiPlaySafetyDataCodec.ComputeNativeWireIntegrityValue(encoded.AsSpan(header.PayloadOffset)),
+            header.IntegrityValue);
+        Assert.Equal(
+            MiPlaySafetyDataCodec.ComputeNativeWireIntegrityValue(encoded.AsSpan(header.PayloadOffset)),
+            BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(5, sizeof(uint))));
         Assert.True(MiPlaySafetyDataCodec.TryDecryptVersion1(encoded, key, iv, out var decoded));
         Assert.NotNull(decoded);
         Assert.Equal(plaintext, decoded.Plaintext);

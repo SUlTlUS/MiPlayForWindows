@@ -59,7 +59,7 @@ public static class MiPlaySafetyDataCodec
         data[2] = Version1;
         data[3] = Version1Flags;
         data[4] = checked((byte)paddingLength);
-        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(5, sizeof(uint)), ComputeCrc32Mpeg2(ciphertext));
+        BinaryPrimitives.WriteUInt32BigEndian(data.AsSpan(5, sizeof(uint)), ComputeNativeWireIntegrityValue(ciphertext));
         ciphertext.CopyTo(data.AsSpan(Version1HeaderLength));
         return data;
     }
@@ -101,8 +101,8 @@ public static class MiPlaySafetyDataCodec
         }
 
         var ciphertext = data.Slice(header.PayloadOffset, header.PayloadLength);
-        var expectedCrc = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(5, sizeof(uint)));
-        if (ComputeCrc32Mpeg2(ciphertext) != expectedCrc)
+        var expectedCrc = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(5, sizeof(uint)));
+        if (ComputeNativeWireIntegrityValue(ciphertext) != expectedCrc)
         {
             return false;
         }
@@ -131,8 +131,10 @@ public static class MiPlaySafetyDataCodec
     }
 
     /// <summary>
-    /// Computes CRC-32/MPEG-2 (poly 0x04C11DB7, init 0xffffffff, no final xor).
-    /// The native container writes this value in little-endian byte order.
+    /// Computes the accumulator used by the local CRC-32/MPEG-2 implementation
+    /// (poly 0x04C11DB7, init 0xffffffff, no final xor). The recovered
+    /// <c>SafetyDataDeal</c> native code compares the byte-reversed form of this
+    /// accumulator against the version-1 header's big-endian integrity field.
     /// </summary>
     public static uint ComputeCrc32Mpeg2(ReadOnlySpan<byte> data)
     {
@@ -150,6 +152,14 @@ public static class MiPlaySafetyDataCodec
 
         return crc;
     }
+
+    /// <summary>
+    /// Computes the logical integrity value stored in a SafetyData v1 header.
+    /// Native <c>encryptData</c> writes this value high-to-low, and native
+    /// <c>decryptData</c> byte-reverses the little-endian load before comparing.
+    /// </summary>
+    public static uint ComputeNativeWireIntegrityValue(ReadOnlySpan<byte> data) =>
+        BinaryPrimitives.ReverseEndianness(ComputeCrc32Mpeg2(data));
 
     private static byte[] TransformCbcNoPadding(
         ReadOnlySpan<byte> input,

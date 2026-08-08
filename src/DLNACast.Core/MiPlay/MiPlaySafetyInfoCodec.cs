@@ -129,6 +129,38 @@ public static class MiPlaySafetyInfoCodec
         return true;
     }
 
+    public static bool TryDecodeOffer(ReadOnlySpan<byte> payload, out MiPlaySafetyInfoOffer? offer)
+    {
+        offer = null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(payload.ToArray());
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !TryReadRequiredType(root, "authKeyTypes", out var authKeyTypes) ||
+                !TryReadRequiredType(root, "authAlgorithmTypes", out var authAlgorithmTypes) ||
+                !TryReadRequiredType(root, "integrityTypes", out var integrityTypes) ||
+                !TryReadRequiredType(root, "aesKeyTypes", out var aesKeyTypes) ||
+                !TryReadRequiredType(root, "aesIvTypes", out var aesIvTypes))
+            {
+                return false;
+            }
+
+            offer = new MiPlaySafetyInfoOffer(
+                authKeyTypes,
+                authAlgorithmTypes,
+                integrityTypes,
+                aesKeyTypes,
+                aesIvTypes);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     public static bool TryDecodeAcknowledgement(
         ReadOnlySpan<byte> payload,
         out MiPlaySafetyInfoAcknowledgement? acknowledgement)
@@ -216,6 +248,19 @@ public static class MiPlaySafetyInfoCodec
 
         value = parsed;
         return true;
+    }
+
+    private static bool TryReadRequiredType(JsonElement root, string name, out uint value)
+    {
+        value = 0;
+        return root.TryGetProperty(name, out var property) &&
+               property.ValueKind == JsonValueKind.String &&
+               uint.TryParse(
+                   property.GetString(),
+                   NumberStyles.None,
+                   CultureInfo.InvariantCulture,
+                   out value) &&
+               value != 0;
     }
 
     private static bool TryGetString(JsonElement root, string name, out string? value)

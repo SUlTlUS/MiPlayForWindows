@@ -7,6 +7,13 @@ namespace DLNACast.Core.Audio;
 
 public sealed class AudioSourceCatalog : IAudioSourceCatalog
 {
+    public AudioSourceItem GetDefaultOutputDevice()
+    {
+        using var enumerator = new MMDeviceEnumerator();
+        using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+        return new AudioSourceItem(device.ID, device.FriendlyName);
+    }
+
     public IReadOnlyList<AudioSourceItem> GetOutputDevices()
     {
         using var enumerator = new MMDeviceEnumerator();
@@ -85,4 +92,3 @@ public sealed class AudioSourceCatalog : IAudioSourceCatalog
         return result;
     }
 }
-

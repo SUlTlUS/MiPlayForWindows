@@ -51,8 +51,8 @@ public static class MiPlaySafetyDataDiagnostics
         }
 
         var ciphertext = data.Slice(header.PayloadOffset, header.PayloadLength);
-        var storedCrc = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(5, sizeof(uint)));
-        var computedCrc = MiPlaySafetyDataCodec.ComputeCrc32Mpeg2(ciphertext);
+        var storedCrc = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(5, sizeof(uint)));
+        var computedCrc = MiPlaySafetyDataCodec.ComputeNativeWireIntegrityValue(ciphertext);
         var crcPrefix = $"{prefix},storedCrc=0x{storedCrc:X8},computedCrc=0x{computedCrc:X8}";
         return storedCrc == computedCrc
             ? $"{crcPrefix},failure=decrypt-or-padding"

@@ -2,105 +2,334 @@
     x:Class="DLNACast.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="DLNA Cast for Windows">
+    Title="DLNA / MiPlay Cast for Windows">
 
     <Grid x:Name="Root" Background="Transparent">
         <Grid.RowDefinitions>
-            <RowDefinition Height="64" />
+            <RowDefinition Height="48" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="76" />
         </Grid.RowDefinitions>
 
-        <Grid x:Name="AppTitleBar" Grid.Row="0" Padding="24,0,20,0" Background="#D90F1420">
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Padding="16,0,142,0" Background="Transparent">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <StackPanel VerticalAlignment="Center" Spacing="2">
-                <TextBlock Text="DLNA Cast" FontSize="22" FontWeight="SemiBold" />
-                <TextBlock Text="Windows 实时音频投送" Foreground="{StaticResource MutedTextBrush}" FontSize="12" />
-            </StackPanel>
-            <Border Grid.Column="1" Padding="12,6" CornerRadius="14" Background="#334F7CFF" VerticalAlignment="Center">
-                <TextBlock Text="{Binding ProfileText}" Foreground="#BFD1FF" FontWeight="SemiBold" />
+            <Border Width="28" Height="28" CornerRadius="7" Background="{ThemeResource BrandBrush}" VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE8A5;" FontSize="14" Foreground="White" />
             </Border>
+            <TextBlock Grid.Column="1" Margin="10,0,0,0" Text="DLNA / MiPlay Cast" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
         </Grid>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <StackPanel Padding="28,24" Spacing="16">
-                <Border Background="#33F59E0B" BorderBrush="#88F59E0B" BorderThickness="1" CornerRadius="12" Padding="16">
-                    <Grid ColumnSpacing="12">
+        <ScrollViewer x:Name="PageScrollViewer" Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                      HorizontalContentAlignment="Stretch">
+            <Grid x:Name="PageLayout"
+                  MaxWidth="1180"
+                  Padding="32,24,32,32"
+                  ColumnSpacing="20"
+                  RowSpacing="20"
+                  HorizontalAlignment="Stretch">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition x:Name="SideColumn" Width="344" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Margin="0,0,0,4" Spacing="5">
+                    <TextBlock Text="{Binding Text.PageHeading}" FontSize="28" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Text.PageSubtitle}" Style="{StaticResource SecondaryTextStyle}" FontSize="14" />
+                </StackPanel>
+
+                <StackPanel x:Name="WorkflowPanel" Grid.Row="1" Grid.Column="0" Spacing="16">
+                    <Border Style="{StaticResource AppCardStyle}" Padding="20,18" Height="136">
+                        <Grid RowSpacing="8">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="9">
+                                <FontIcon Glyph="&#xE9D9;" FontSize="17" Foreground="{ThemeResource BrandTextBrush}" />
+                                <TextBlock Text="{Binding Text.CastStatus}" Style="{StaticResource SectionTitleStyle}" />
+                            </StackPanel>
+                            <TextBlock Grid.Row="1" Text="{Binding StatusText}" FontSize="16" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+                            <TextBlock Grid.Row="2" Text="{Binding ErrorText}" FontSize="12"
+                                       Foreground="{ThemeResource ErrorTextBrush}" TextWrapping="NoWrap"
+                                       TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                    </Border>
+
+                    <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="网络安全状态" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding NetworkSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+
+                    <Border Style="{StaticResource AppCardStyle}">
+                        <StackPanel Spacing="16">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="{Binding Text.Transport}" Style="{StaticResource SectionTitleStyle}" />
+                                <TextBlock Text="{Binding Text.TransportHint}" Style="{StaticResource SecondaryTextStyle}" FontSize="12" />
+                            </StackPanel>
+
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Padding="14,10" CornerRadius="{ThemeResource OverlayCornerRadius}" Background="{ThemeResource SubtleSurfaceBrush}">
+                                    <RadioButton GroupName="TransportMode" IsChecked="{Binding IsDlnaMode, Mode=TwoWay}" IsEnabled="{Binding CanChangeTransport}">
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="DLNA" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Text.DlnaDescription}" Style="{StaticResource SecondaryTextStyle}" FontSize="12" />
+                                        </StackPanel>
+                                    </RadioButton>
+                                </Border>
+                                <Border Grid.Column="1" Padding="14,10" CornerRadius="{ThemeResource OverlayCornerRadius}" Background="{ThemeResource SubtleSurfaceBrush}">
+                                    <RadioButton GroupName="TransportMode" IsChecked="{Binding IsMiPlayMode, Mode=TwoWay}" IsEnabled="{Binding CanChangeTransport}">
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="{Binding Text.MiPlay}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Text.MiPlayDescription}" Style="{StaticResource SecondaryTextStyle}" FontSize="12" />
+                                        </StackPanel>
+                                    </RadioButton>
+                                </Border>
+                            </Grid>
+
                         </StackPanel>
-                        <Button Grid.Column="1" Content="重新检测" Command="{Binding RefreshNetworkCommand}" VerticalAlignment="Center" />
-                        <Button Grid.Column="2" Content="网络设置" Command="{Binding OpenNetworkSettingsCommand}" VerticalAlignment="Center" />
+                    </Border>
+
+                    <Border Grid.Column="1" Style="{StaticResource AppCardStyle}">
+                        <StackPanel Spacing="14">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="{Binding Text.AudioSource}" Style="{StaticResource SectionTitleStyle}" />
+                                <TextBlock Text="{Binding Text.AudioSourceHint}" Style="{StaticResource SecondaryTextStyle}" FontSize="12" />
+                            </StackPanel>
+                            <Grid ColumnSpacing="12" RowSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <RadioButton MinWidth="0" Content="{Binding Text.AllOutputAudio}"
+                                             IsEnabled="{Binding CanUseProcessCapture}"
+                                             IsChecked="{Binding IsSystemMode, Mode=TwoWay}" />
+                                <RadioButton Grid.Column="1" MinWidth="0" Content="{Binding Text.AppAndChildren}"
+                                             IsChecked="{Binding IsProcessMode, Mode=TwoWay}"
+                                             IsEnabled="{Binding CanUseProcessCapture}" />
+                                <ToggleButton Grid.Row="1" Grid.ColumnSpan="2" MinWidth="0"
+                                              HorizontalAlignment="Left"
+                                              Content="{Binding Text.SpeakersOnly}"
+                                              IsChecked="{Binding IsSpeakerOnlyPlayback, Mode=TwoWay}"
+                                              IsEnabled="{Binding CanUseSpeakerOnlyPlayback}"
+                                              ToolTipService.ToolTip="{Binding Text.SpeakersOnlyTooltip}"
+                                              AutomationProperties.Name="{Binding Text.SpeakersOnly}" />
+                            </Grid>
+                            <Grid ColumnSpacing="10" Visibility="{Binding AudioSourceSelectorVisibility}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ComboBox ItemsSource="{Binding Sources}"
+                                          SelectedItem="{Binding SelectedSource, Mode=TwoWay}"
+                                          IsEnabled="{Binding CanUseProcessCapture}"
+                                          DisplayMemberPath="DisplayName"
+                                          PlaceholderText="{Binding Text.NoAudioSources}"
+                                          HorizontalAlignment="Stretch"
+                                          AutomationProperties.Name="{Binding Text.AudioSource}" />
+                                <Button Grid.Column="1" Command="{Binding RefreshSourcesCommand}" AutomationProperties.Name="{Binding Text.RefreshAudioSources}">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                        <TextBlock Text="{Binding Text.Refresh}" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
                     </Grid>
-                </Border>
 
-                <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="14" Padding="18">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="1  选择 DLNA 音箱" FontSize="16" FontWeight="SemiBold" />
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <ComboBox ItemsSource="{Binding Renderers}" SelectedItem="{Binding SelectedRenderer, Mode=TwoWay}" DisplayMemberPath="DisplayLabel" HorizontalAlignment="Stretch" />
-                            <Button Grid.Column="1" Content="刷新设备" Command="{Binding RefreshRenderersCommand}" />
-                        </Grid>
-                    </StackPanel>
-                </Border>
+                </StackPanel>
 
-                <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="14" Padding="18">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="2  选择 Windows 音频" FontSize="16" FontWeight="SemiBold" />
-                        <StackPanel Orientation="Horizontal" Spacing="22">
-                            <RadioButton Content="输出设备全部声音" IsChecked="{Binding IsSystemMode, Mode=TwoWay}" />
-                            <RadioButton Content="应用及其子进程" IsChecked="{Binding IsProcessMode, Mode=TwoWay}" />
+                <StackPanel x:Name="DevicePanel" Grid.Row="1" Grid.Column="1" Spacing="16">
+                    <Border Style="{StaticResource AppCardStyle}">
+                        <StackPanel Spacing="16">
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{Binding Text.PlaybackDevices}" Style="{StaticResource SectionTitleStyle}" />
+                                    <TextBlock Text="{Binding RendererSelectionText}" Style="{StaticResource SecondaryTextStyle}" FontSize="12" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top">
+                                    <ToggleButton Content="{Binding Text.StereoSplit}"
+                                                  IsChecked="{Binding IsStereoSplitMode, Mode=TwoWay}"
+                                                  IsEnabled="{Binding CanUseStereoSplit}"
+                                                  ToolTipService.ToolTip="{Binding Text.StereoSplitTooltip}"
+                                                  AutomationProperties.Name="{Binding Text.StereoSplit}" />
+                                    <Button Command="{Binding RefreshRenderersCommand}" AutomationProperties.Name="{Binding Text.RefreshPlaybackDevices}">
+                                        <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+
+                            <InfoBar IsOpen="{Binding HasNoRenderers}" IsClosable="False" Severity="Informational"
+                                     Message="{Binding Text.NoPlaybackDevices}" />
+
+                            <ItemsControl ItemsSource="{Binding Renderers}"
+                                          Visibility="{Binding NormalRendererListVisibility}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,8" Padding="12,10" CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                                Background="{ThemeResource SubtleSurfaceBrush}">
+                                            <StackPanel Spacing="8">
+                                                <Grid ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                                  IsEnabled="{Binding IsSelectionEnabled}"
+                                                                  MinWidth="0"
+                                                                  AutomationProperties.Name="{Binding FriendlyName}" />
+                                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding FriendlyName}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="1" Text="{Binding VolumeText}" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center" />
+                                                </Grid>
+                                                <Slider Margin="0" Minimum="0" Maximum="100"
+                                                        Value="{Binding Volume, Mode=TwoWay}" StepFrequency="1"
+                                                        IsEnabled="{Binding CanAdjustVolume}"
+                                                        AutomationProperties.Name="{Binding SpeakerVolumeAutomationName}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <StackPanel Spacing="14" Visibility="{Binding StereoRendererListsVisibility}">
+                                <Border Padding="12,10"
+                                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                        Background="{ThemeResource SubtleSurfaceBrush}">
+                                    <StackPanel Spacing="8">
+                                        <Grid>
+                                            <TextBlock Text="{Binding StereoMasterVolumeLabel}"
+                                                       FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding StereoMasterVolumeText}"
+                                                       HorizontalAlignment="Right"
+                                                       FontWeight="SemiBold" />
+                                        </Grid>
+                                        <Slider Margin="0" Minimum="0" Maximum="100"
+                                                Value="{Binding StereoMasterVolume, Mode=TwoWay}"
+                                                StepFrequency="1"
+                                                IsEnabled="{Binding CanAdjustStereoMasterVolume}"
+                                                AutomationProperties.Name="{Binding StereoMasterVolumeAutomationName}" />
+                                    </StackPanel>
+                                </Border>
+
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{Binding LeftChannelText}"
+                                               FontWeight="SemiBold"
+                                               AutomationProperties.HeadingLevel="Level3" />
+                                    <ItemsControl ItemsSource="{Binding Renderers}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Margin="0,0,0,8" Padding="12,10"
+                                                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                                        Background="{ThemeResource SubtleSurfaceBrush}">
+                                                    <StackPanel Spacing="8">
+                                                        <Grid ColumnSpacing="10">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <CheckBox IsChecked="{Binding IsLeftChannel, Mode=TwoWay}"
+                                                                      IsEnabled="{Binding IsSelectionEnabled}"
+                                                                      MinWidth="0"
+                                                                      MinHeight="44"
+                                                                      VerticalAlignment="Center"
+                                                                      AutomationProperties.Name="{Binding LeftChannelSelectionAutomationName}" />
+                                                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding FriendlyName}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                            <TextBlock Grid.Column="2" Text="{Binding VolumeText}"
+                                                                       FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                        </Grid>
+                                                        <Slider Margin="0" Minimum="0" Maximum="100"
+                                                                Value="{Binding Volume, Mode=TwoWay}" StepFrequency="1"
+                                                                IsEnabled="{Binding CanAdjustLeftChannelVolume}"
+                                                                AutomationProperties.Name="{Binding LeftChannelVolumeAutomationName}" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{Binding RightChannelText}"
+                                               FontWeight="SemiBold"
+                                               AutomationProperties.HeadingLevel="Level3" />
+                                    <ItemsControl ItemsSource="{Binding Renderers}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Margin="0,0,0,8" Padding="12,10"
+                                                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                                        Background="{ThemeResource SubtleSurfaceBrush}">
+                                                    <StackPanel Spacing="8">
+                                                        <Grid ColumnSpacing="10">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <CheckBox IsChecked="{Binding IsRightChannel, Mode=TwoWay}"
+                                                                      IsEnabled="{Binding IsSelectionEnabled}"
+                                                                      MinWidth="0"
+                                                                      MinHeight="44"
+                                                                      VerticalAlignment="Center"
+                                                                      AutomationProperties.Name="{Binding RightChannelSelectionAutomationName}" />
+                                                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding FriendlyName}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                            <TextBlock Grid.Column="2" Text="{Binding VolumeText}"
+                                                                       FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                        </Grid>
+                                                        <Slider Margin="0" Minimum="0" Maximum="100"
+                                                                Value="{Binding Volume, Mode=TwoWay}" StepFrequency="1"
+                                                                IsEnabled="{Binding CanAdjustRightChannelVolume}"
+                                                                AutomationProperties.Name="{Binding RightChannelVolumeAutomationName}" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </StackPanel>
                         </StackPanel>
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <ComboBox ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource, Mode=TwoWay}" DisplayMemberPath="DisplayName" HorizontalAlignment="Stretch" />
-                            <Button Grid.Column="1" Content="刷新音源" Command="{Binding RefreshSourcesCommand}" />
-                        </Grid>
-                    </StackPanel>
-                </Border>
+                    </Border>
 
-                <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="14" Padding="18">
-                    <StackPanel Spacing="10">
-                        <Grid>
-                            <TextBlock Text="3  音箱音量" FontSize="16" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding RemoteVolumeText}" HorizontalAlignment="Right" FontWeight="SemiBold" />
-                        </Grid>
-                        <Slider Minimum="0" Maximum="100" Value="{Binding RemoteVolume, Mode=TwoWay}" StepFrequency="1" />
-                    </StackPanel>
-                </Border>
-
-                <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="14" Padding="18">
-                    <StackPanel Spacing="7">
-                        <TextBlock Text="投送状态" Foreground="{StaticResource MutedTextBrush}" />
-                        <TextBlock Text="{Binding StatusText}" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding DiagnosticsText}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding ErrorText}" Foreground="#FFFF8A80" TextWrapping="Wrap" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
+                    <Border Style="{StaticResource AppCardStyle}" Padding="18">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <FontIcon Glyph="&#xE946;" FontSize="16" Foreground="{ThemeResource MutedTextBrush}" />
+                            <TextBlock Text="{Binding Text.TrayHint}" Style="{StaticResource SecondaryTextStyle}" FontSize="12" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
         </ScrollViewer>
-
-        <Grid Grid.Row="2" Padding="28,12" Background="#E6111722">
-            <TextBlock Text="关闭窗口后仍会在系统托盘运行" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
-            <Button Content="{Binding CastButtonText}" Command="{Binding ToggleCastingCommand}"
-                    HorizontalAlignment="Right" MinWidth="160" Background="{StaticResource BrandBrush}"
-                    Foreground="White" FontWeight="SemiBold" />
-        </Grid>
     </Grid>
 </Window>

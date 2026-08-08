@@ -6,8 +6,10 @@ public sealed record AppSettings(
     string? LastRendererUdn = null,
     string CaptureMode = "SystemMix",
     string? LastSourceId = null,
+    string TransportMode = "DLNA",
     bool AllowMp3Fallback = true,
-    bool MinimizeToTray = true);
+    bool MinimizeToTray = true,
+    bool SpeakerOnlyPlayback = true);
 
 public sealed class AppSettingsStore
 {
@@ -65,4 +67,3 @@ public sealed class AppSettingsStore
         }
     }
 }
-

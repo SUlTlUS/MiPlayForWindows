@@ -25,6 +25,7 @@ public sealed class CastCoordinatorTests
             CreateRenderer("http-get:*:*:*"),
             new CaptureSelection.SystemMix("fake", "Fake system mix"),
             allowMp3Fallback: true,
+            muteLocalOutput: true,
             timeout.Token);
 
         Assert.Equal(CastSessionState.Streaming, coordinator.Diagnostics.State);
@@ -42,10 +43,10 @@ public sealed class CastCoordinatorTests
             new FakeAudioCatalog(), controller, new FakeStreamServer(), new FakeLocalOutputManager());
         var renderer = CreateRenderer("http-get:*:*:*");
         var selection = new CaptureSelection.SystemMix("fake", "Fake system mix");
-        await coordinator.StartAsync(renderer, selection, allowMp3Fallback: true, timeout.Token);
+        await coordinator.StartAsync(renderer, selection, allowMp3Fallback: true, muteLocalOutput: true, timeout.Token);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            coordinator.StartAsync(renderer, selection, allowMp3Fallback: true, timeout.Token));
+            coordinator.StartAsync(renderer, selection, allowMp3Fallback: true, muteLocalOutput: true, timeout.Token));
 
         Assert.True(coordinator.IsCasting);
         Assert.Equal(CastSessionState.Streaming, coordinator.Diagnostics.State);
@@ -53,28 +54,146 @@ public sealed class CastCoordinatorTests
     }
 
     [Fact]
-    public async Task MutesAfterCaptureStartsAndRestoresAfterCaptureStops()
+    public async Task RoutesBeforeCaptureStartsAndRestoresAfterCaptureStops()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         var calls = new List<string>();
-        var localOutputs = new FakeLocalOutputManager(calls);
+        var routedSelection = new CaptureSelection.SystemMix("virtual", "Virtual speaker");
+        var localOutputs = new FakeLocalOutputManager(calls, routedSelection);
+        var audioCatalog = new FakeAudioCatalog(calls);
         await using var coordinator = new CastCoordinator(
-            new FakeAudioCatalog(calls),
+            audioCatalog,
             new FakeRendererController(rejectWave: false),
             new FakeStreamServer(),
             localOutputs);
         var selection = new CaptureSelection.SystemMix("fake", "Fake system mix");
 
-        await coordinator.StartAsync(CreateRenderer("http-get:*:*:*"), selection, true, timeout.Token);
+        await coordinator.StartAsync(CreateRenderer("http-get:*:*:*"), selection, true, true, timeout.Token);
 
-        Assert.Equal(["capture-start", "mute"], calls.Take(2));
-        Assert.Equal(selection, localOutputs.MutedSelection);
+        Assert.Equal(["route", "capture-start"], calls.Take(2));
+        Assert.Equal(selection, localOutputs.OriginalSelection);
+        Assert.Equal(routedSelection, audioCatalog.CreatedSelection);
         Assert.False(localOutputs.Restored);
 
         await coordinator.StopAsync();
 
         Assert.True(localOutputs.Restored);
         Assert.True(calls.IndexOf("capture-dispose") < calls.IndexOf("restore"));
+    }
+
+    [Fact]
+    public async Task KeepsLocalOutputPlayingWhenMuteIsDisabled()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var localOutputs = new FakeLocalOutputManager();
+        await using var coordinator = new CastCoordinator(
+            new FakeAudioCatalog(),
+            new FakeRendererController(rejectWave: false),
+            new FakeStreamServer(),
+            localOutputs);
+
+        await coordinator.StartAsync(
+            CreateRenderer("http-get:*:*:*"),
+            new CaptureSelection.SystemMix("fake", "Fake system mix"),
+            allowMp3Fallback: true,
+            muteLocalOutput: false,
+            timeout.Token);
+
+        Assert.Null(localOutputs.OriginalSelection);
+        Assert.False(localOutputs.Restored);
+    }
+
+    [Fact]
+    public async Task SwitchesLocalPlaybackWithoutStoppingTheDlnaSession()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var calls = new List<string>();
+        var original = new CaptureSelection.SystemMix("physical", "Physical output");
+        var routed = new CaptureSelection.SystemMix("virtual", "Virtual output");
+        var controller = new FakeRendererController(rejectWave: false);
+        var audioCatalog = new FakeAudioCatalog(calls);
+        var localOutputs = new FakeLocalOutputManager(calls, routed);
+        await using var coordinator = new CastCoordinator(
+            audioCatalog,
+            controller,
+            new FakeStreamServer(),
+            localOutputs);
+        await coordinator.StartAsync(
+            CreateRenderer("http-get:*:*:*"),
+            original,
+            allowMp3Fallback: true,
+            muteLocalOutput: false,
+            timeout.Token);
+
+        await coordinator.SetMuteLocalOutputAsync(true, timeout.Token);
+
+        Assert.True(coordinator.IsCasting);
+        Assert.Equal(0, controller.StopCalls);
+        Assert.Equal(routed, audioCatalog.CreatedSelection);
+        Assert.False(localOutputs.Restored);
+
+        await coordinator.SetMuteLocalOutputAsync(false, timeout.Token);
+
+        Assert.True(coordinator.IsCasting);
+        Assert.Equal(0, controller.StopCalls);
+        Assert.Equal(original, audioCatalog.CreatedSelection);
+        Assert.True(localOutputs.Restored);
+    }
+
+    [Fact]
+    public async Task ProcessCaptureChangesRoutingWithoutReplacingTheCapture()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var calls = new List<string>();
+        var selection = new CaptureSelection.Process(42, "Player", true);
+        var controller = new FakeRendererController(rejectWave: false);
+        await using var coordinator = new CastCoordinator(
+            new FakeAudioCatalog(calls),
+            controller,
+            new FakeStreamServer(),
+            new FakeLocalOutputManager(calls, selection));
+        await coordinator.StartAsync(
+            CreateRenderer("http-get:*:*:*"),
+            selection,
+            allowMp3Fallback: true,
+            muteLocalOutput: false,
+            timeout.Token);
+
+        await coordinator.SetMuteLocalOutputAsync(true, timeout.Token);
+        await coordinator.SetMuteLocalOutputAsync(false, timeout.Token);
+
+        Assert.Equal(1, calls.Count(call => call == "capture-start"));
+        Assert.Equal(0, controller.StopCalls);
+        Assert.True(coordinator.IsCasting);
+    }
+
+    [Fact]
+    public async Task SwitchesCaptureSourceWithoutStoppingTheDlnaSession()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var calls = new List<string>();
+        var original = new CaptureSelection.SystemMix("physical-a", "Physical A");
+        var replacement = new CaptureSelection.SystemMix("physical-b", "Physical B");
+        var controller = new FakeRendererController(rejectWave: false);
+        var audioCatalog = new FakeAudioCatalog(calls);
+        await using var coordinator = new CastCoordinator(
+            audioCatalog,
+            controller,
+            new FakeStreamServer(),
+            new FakeLocalOutputManager(calls));
+        await coordinator.StartAsync(
+            CreateRenderer("http-get:*:*:*"),
+            original,
+            allowMp3Fallback: true,
+            muteLocalOutput: false,
+            timeout.Token);
+
+        await coordinator.SetCaptureSelectionAsync(replacement, replacement, timeout.Token);
+
+        Assert.Equal(replacement, audioCatalog.CreatedSelection);
+        Assert.Equal(0, controller.StopCalls);
+        Assert.True(coordinator.IsCasting);
+        Assert.Equal(CastSessionState.Streaming, coordinator.Diagnostics.State);
     }
 
     [Fact]
@@ -92,6 +211,7 @@ public sealed class CastCoordinatorTests
             CreateRenderer("http-get:*:*:*"),
             new CaptureSelection.SystemMix("fake", "Fake system mix"),
             allowMp3Fallback: false,
+            muteLocalOutput: true,
             timeout.Token));
 
         Assert.True(localOutputs.Restored);
@@ -107,9 +227,14 @@ public sealed class CastCoordinatorTests
 
     private sealed class FakeAudioCatalog(List<string>? calls = null) : IAudioSourceCatalog
     {
+        public CaptureSelection? CreatedSelection { get; private set; }
         public IReadOnlyList<AudioSourceItem> GetOutputDevices() => [];
         public IReadOnlyList<AudioSourceItem> GetCandidateProcesses() => [];
-        public IAudioCaptureSource CreateCapture(CaptureSelection selection) => new FakeCapture(selection, calls);
+        public IAudioCaptureSource CreateCapture(CaptureSelection selection)
+        {
+            CreatedSelection = selection;
+            return new FakeCapture(selection, calls);
+        }
     }
 
     private sealed class FakeCapture(CaptureSelection selection, List<string>? calls) : IAudioCaptureSource
@@ -145,24 +270,31 @@ public sealed class CastCoordinatorTests
         }
     }
 
-    private sealed class FakeLocalOutputManager(List<string>? calls = null) : ILocalOutputManager
+    private sealed class FakeLocalOutputManager(
+        List<string>? calls = null,
+        CaptureSelection? captureSelection = null) : ILocalOutputManager
     {
-        public CaptureSelection? MutedSelection { get; private set; }
+        public CaptureSelection? OriginalSelection { get; private set; }
         public bool Restored { get; private set; }
 
-        public ValueTask<IAsyncDisposable> MuteForCastAsync(
+        public ValueTask<ILocalOutputLease> RouteForCastAsync(
             CaptureSelection selection,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            calls?.Add("mute");
-            MutedSelection = selection;
-            return ValueTask.FromResult<IAsyncDisposable>(new RestoreLease(this, calls));
+            calls?.Add("route");
+            OriginalSelection = selection;
+            return ValueTask.FromResult<ILocalOutputLease>(
+                new RestoreLease(this, calls, captureSelection ?? selection));
         }
 
-        private sealed class RestoreLease(FakeLocalOutputManager owner, List<string>? calls) : IAsyncDisposable
+        private sealed class RestoreLease(
+            FakeLocalOutputManager owner,
+            List<string>? calls,
+            CaptureSelection captureSelection) : ILocalOutputLease
         {
             private int _restored;
+            public CaptureSelection CaptureSelection { get; } = captureSelection;
 
             public ValueTask DisposeAsync()
             {

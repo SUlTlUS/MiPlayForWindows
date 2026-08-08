@@ -12,11 +12,63 @@ namespace DLNACast.Core.MiPlay;
 /// </summary>
 public static class MiPlayLocalDeviceInfoPayloadCodec
 {
+    /// <summary>
+    /// Exact legacy-clear source identity shape captured from com.milink.service
+    /// 12.4.8.13. Forward slashes are escaped to reproduce its byte transcript.
+    /// </summary>
+    public static byte[] EncodeLegacySourceNameOnly(string sourceName)
+    {
+        if (string.IsNullOrEmpty(sourceName))
+        {
+            throw new ArgumentException("Source name must not be null or empty.", nameof(sourceName));
+        }
+
+        var encodedName = JsonEncodedText
+            .Encode(sourceName, JavaScriptEncoder.UnsafeRelaxedJsonEscaping)
+            .ToString()
+            .Replace("/", "\\/", StringComparison.Ordinal);
+        return Encoding.UTF8.GetBytes($"{{\"sourceName\":\"{encodedName}\"}}");
+    }
+
     public static byte[] EncodeSourceName(
         string sourceName,
         string? bluetoothMac,
         string canAlonePlayCtrl = "0",
         bool includeControlFields = true)
+    {
+        return EncodeSourceNameCore(
+            sourceName,
+            EncodeBluetoothMacHash(bluetoothMac),
+            canAlonePlayCtrl,
+            includeControlFields);
+    }
+
+    public static byte[] EncodeSourceNameWithBluetoothMacHash(
+        string sourceName,
+        string? bluetoothMacHash,
+        string canAlonePlayCtrl = "0",
+        bool includeControlFields = true)
+    {
+        return EncodeSourceNameCore(
+            sourceName,
+            NormalizeBluetoothMacHash(bluetoothMacHash),
+            canAlonePlayCtrl,
+            includeControlFields);
+    }
+
+    public static byte[] EncodeRecoveredOfficialSourceIdentity()
+    {
+        return EncodeSourceNameWithBluetoothMacHash(
+            MiPlayRealPhonePostAuthPlaintextEvidence.RecoveredOfficialSourceName,
+            MiPlayRealPhonePostAuthPlaintextEvidence.RecoveredOfficialSourceBluetoothMacHash,
+            includeControlFields: false);
+    }
+
+    private static byte[] EncodeSourceNameCore(
+        string sourceName,
+        string encodedBluetoothMacHash,
+        string canAlonePlayCtrl,
+        bool includeControlFields)
     {
         if (string.IsNullOrEmpty(sourceName))
         {
@@ -26,7 +78,7 @@ public static class MiPlayLocalDeviceInfoPayloadCodec
         return WriteJson(writer =>
         {
             writer.WriteString("sourceName", sourceName);
-            writer.WriteString("mSourceBtMac", EncodeBluetoothMacHash(bluetoothMac));
+            writer.WriteString("mSourceBtMac", encodedBluetoothMacHash);
 
             if (includeControlFields)
             {
@@ -49,6 +101,49 @@ public static class MiPlayLocalDeviceInfoPayloadCodec
         });
     }
 
+    public static byte[] EncodeCanAlonePlayCtrl(string value = "1")
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        return WriteJson(writer => writer.WriteString("canAlonePlayCtrl", value));
+    }
+
+    public static byte[] EncodeAlonePlayCapacity(string value = "1")
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        return WriteJson(writer => writer.WriteString("alonePlayCapacity", value));
+    }
+
+    public static byte[] EncodeIsSameAccount(int value) =>
+        WriteJson(writer => writer.WriteNumber("isSameAccount", value));
+
+    public static bool TryDecodeIsSameAccount(ReadOnlySpan<byte> payload, out int value)
+    {
+        value = 0;
+        try
+        {
+            using var document = JsonDocument.Parse(payload.ToArray());
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                root.EnumerateObject().Count() != 1 ||
+                !root.TryGetProperty("isSameAccount", out var property) ||
+                property.ValueKind != JsonValueKind.Number ||
+                !property.TryGetInt32(out value))
+            {
+                value = 0;
+                return false;
+            }
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            value = 0;
+            return false;
+        }
+    }
+
     public static string EncodeBluetoothMacHash(string? bluetoothMac)
     {
         if (string.IsNullOrEmpty(bluetoothMac))
@@ -67,6 +162,21 @@ public static class MiPlayLocalDeviceInfoPayloadCodec
         }
 
         return builder.ToString();
+    }
+
+    public static string NormalizeBluetoothMacHash(string? bluetoothMacHash)
+    {
+        if (string.IsNullOrEmpty(bluetoothMacHash))
+        {
+            return string.Empty;
+        }
+
+        if (bluetoothMacHash.Length != 32 || bluetoothMacHash.Any(value => !Uri.IsHexDigit(value)))
+        {
+            throw new ArgumentException("The precomputed Bluetooth MAC hash must be a 32-character hexadecimal MD5 string.", nameof(bluetoothMacHash));
+        }
+
+        return bluetoothMacHash.ToUpperInvariant();
     }
 
     private static byte[] WriteJson(Action<Utf8JsonWriter> writeFields)

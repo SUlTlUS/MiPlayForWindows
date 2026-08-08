@@ -14,20 +14,33 @@ public sealed class MiPlaySafetyDataSessionCipher
     private readonly byte[] decryptIvState;
 
     public MiPlaySafetyDataSessionCipher(ReadOnlySpan<byte> aesKey, ReadOnlySpan<byte> aesIv)
+        : this(aesKey, aesIv, aesIv)
+    {
+    }
+
+    public MiPlaySafetyDataSessionCipher(
+        ReadOnlySpan<byte> aesKey,
+        ReadOnlySpan<byte> encryptAesIv,
+        ReadOnlySpan<byte> decryptAesIv)
     {
         if (aesKey.Length != AesBlockLength)
         {
             throw new ArgumentException("MiPlay SafetyData version 1 requires a 16-byte AES key.", nameof(aesKey));
         }
 
-        if (aesIv.Length != AesBlockLength)
+        if (encryptAesIv.Length != AesBlockLength)
         {
-            throw new ArgumentException("MiPlay SafetyData version 1 requires a 16-byte AES IV.", nameof(aesIv));
+            throw new ArgumentException("MiPlay SafetyData version 1 requires a 16-byte AES IV.", nameof(encryptAesIv));
+        }
+
+        if (decryptAesIv.Length != AesBlockLength)
+        {
+            throw new ArgumentException("MiPlay SafetyData version 1 requires a 16-byte AES IV.", nameof(decryptAesIv));
         }
 
         this.aesKey = aesKey.ToArray();
-        encryptIvState = aesIv.ToArray();
-        decryptIvState = aesIv.ToArray();
+        encryptIvState = encryptAesIv.ToArray();
+        decryptIvState = decryptAesIv.ToArray();
     }
 
     public byte[] EncryptVersion1(ReadOnlySpan<byte> plaintext) =>

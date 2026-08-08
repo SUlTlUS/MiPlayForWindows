@@ -1,12 +1,19 @@
 .codegraph/
+.dotnet/
 .vs/
 bin/
 obj/
 artifacts/
 TestResults/
+__pycache__/
+*.py[cod]
 *.user
 *.suo
 *.pfx
 *.cer
+
+# Windows driver build outputs.
+drivers/**/x64/
+drivers/**/RC[0-9A-Fa-f]*
 
 .playwright-cli/

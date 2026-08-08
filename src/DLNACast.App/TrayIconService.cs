@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using DLNACast.Core.Localization;
 
 namespace DLNACast.App;
 
@@ -39,7 +40,9 @@ internal sealed class TrayIconService : IDisposable
         var callbackPointer = Marshal.GetFunctionPointerForDelegate(_windowProcedure);
         if (SetWindowLongPtr(_windowHandle, GwlpWndProc, callbackPointer) == IntPtr.Zero)
         {
-            throw new InvalidOperationException("无法注册系统托盘回调。");
+            throw new InvalidOperationException(SystemLanguage.Select(
+                "无法注册系统托盘回调。",
+                "Unable to register the system tray callback."));
         }
 
         _iconData = new NotifyIconData
@@ -58,7 +61,9 @@ internal sealed class TrayIconService : IDisposable
         if (!ShellNotifyIcon(NimAdd, ref _iconData))
         {
             SetWindowLongPtr(_windowHandle, GwlpWndProc, _originalWindowProcedure);
-            throw new InvalidOperationException("无法在 Windows 通知区创建图标。");
+            throw new InvalidOperationException(SystemLanguage.Select(
+                "无法在 Windows 通知区创建图标。",
+                "Unable to create an icon in the Windows notification area."));
         }
     }
 

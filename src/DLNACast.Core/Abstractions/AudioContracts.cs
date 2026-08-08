@@ -22,7 +22,19 @@ public interface IAudioSourceCatalog
 
 public interface ILocalOutputManager
 {
-    ValueTask<IAsyncDisposable> MuteForCastAsync(
+    ValueTask<ILocalOutputLease> RouteForCastAsync(
         CaptureSelection selection,
         CancellationToken cancellationToken);
+}
+
+public interface ISwitchableLocalOutputManager : ILocalOutputManager
+{
+    ValueTask<CaptureSelection> SwitchActiveRouteAsync(
+        CaptureSelection selection,
+        CancellationToken cancellationToken);
+}
+
+public interface ILocalOutputLease : IAsyncDisposable
+{
+    CaptureSelection CaptureSelection { get; }
 }

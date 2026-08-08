@@ -2,6 +2,7 @@ using DLNACast.App.ViewModels;
 using DLNACast.Core.Audio;
 using DLNACast.Core.Casting;
 using DLNACast.Core.Dlna;
+using DLNACast.Core.MiPlay;
 using DLNACast.Core.Storage;
 using DLNACast.Core.Streaming;
 using Microsoft.UI.Dispatching;
@@ -37,16 +38,20 @@ public partial class App : Microsoft.UI.Xaml.Application
         var audioCatalog = new AudioSourceCatalog();
         _discovery = new RendererDiscoveryService();
         _controller = new RendererController();
-        var streamServer = new LiveStreamServer();
-        var coordinator = new CastCoordinator(
+        var localOutputs = new SharedLocalOutputManager(new WindowsLocalOutputManager());
+        CastCoordinator CreateCoordinator() => new(
             audioCatalog,
-            _controller,
-            streamServer,
-            new WindowsLocalOutputManager());
+            new RendererController(),
+            new LiveStreamServer(),
+            localOutputs);
+        MiPlaySystemAudioTransmitter CreateMiPlayTransmitter() => new(
+            new MiPlayLegacySystemAudioSessionRunner(audioCatalog));
         _viewModel = new MainViewModel(
             audioCatalog,
             _discovery,
-            coordinator,
+            CreateCoordinator,
+            CreateMiPlayTransmitter,
+            localOutputs,
             _controller,
             settingsStore,
             logger,

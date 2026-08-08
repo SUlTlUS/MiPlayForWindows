@@ -1,12 +1,18 @@
 using DLNACast.Core.Abstractions;
 using DLNACast.Core.Models;
-using Rssdp;
 
 namespace DLNACast.Core.Dlna;
 
 public sealed class RendererDiscoveryService : IRendererDiscovery
 {
-    private readonly SsdpDeviceLocator _locator = new();
+    private static readonly string[] SearchTargets =
+    [
+        "urn:schemas-upnp-org:device:MediaRenderer:1",
+        "urn:schemas-upnp-org:device:MediaRenderer:2",
+        "urn:schemas-upnp-org:device:MediaRenderer:3",
+    ];
+
+    private readonly SsdpMulticastSearchClient _searchClient = new();
     private readonly UpnpSoapClient _soapClient = new();
     private readonly RendererController _controller;
 
@@ -14,24 +20,15 @@ public sealed class RendererDiscoveryService : IRendererDiscovery
 
     public async Task<IReadOnlyList<RendererDevice>> SearchAsync(CancellationToken cancellationToken)
     {
-        var discovered = new List<DiscoveredSsdpDevice>();
-        for (var version = 1; version <= 3; version++)
-        {
-            var searchTarget = $"urn:schemas-upnp-org:device:MediaRenderer:{version}";
-            var result = await _locator.SearchAsync(searchTarget, TimeSpan.FromSeconds(2), cancellationToken)
-                .ConfigureAwait(false);
-            discovered.AddRange(result);
-        }
+        var descriptionLocations = await _searchClient
+            .SearchAsync(SearchTargets, TimeSpan.FromSeconds(3), cancellationToken)
+            .ConfigureAwait(false);
 
         var devices = new Dictionary<string, RendererDevice>(StringComparer.OrdinalIgnoreCase);
-        foreach (var candidate in discovered
-                     .Where(candidate => candidate.DescriptionLocation is not null)
-                     .GroupBy(candidate => candidate.DescriptionLocation)
-                     .Select(group => group.First()))
+        foreach (var descriptionUrl in descriptionLocations)
         {
             try
             {
-                var descriptionUrl = candidate.DescriptionLocation!;
                 var xml = await _soapClient.HttpClient.GetStringAsync(descriptionUrl, cancellationToken).ConfigureAwait(false);
                 var renderer = RendererDescriptionParser.Parse(xml, descriptionUrl);
                 var sink = await _controller.GetSinkProtocolInfoAsync(renderer, cancellationToken).ConfigureAwait(false);
@@ -49,10 +46,8 @@ public sealed class RendererDiscoveryService : IRendererDiscovery
 
     public ValueTask DisposeAsync()
     {
-        _locator.Dispose();
         _controller.Dispose();
         _soapClient.Dispose();
         return ValueTask.CompletedTask;
     }
 }
-

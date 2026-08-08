@@ -23,13 +23,23 @@ public sealed class PcmFrameBuffer : IAsyncDisposable
     private readonly Queue<byte[]> _queue = new();
     private readonly SemaphoreSlim _readClockGate = new(1, 1);
     private readonly int _capacityFrames;
+    private readonly AudioChannelRoute _channelRoute;
     private long _overruns;
     private long _underruns;
     private long _nextReadTimestamp;
     private bool _completed;
 
     public PcmFrameBuffer(int maximumMilliseconds = MaximumBufferMilliseconds)
+        : this(AudioChannelRoute.Stereo, maximumMilliseconds)
     {
+    }
+
+    public PcmFrameBuffer(
+        AudioChannelRoute channelRoute,
+        int maximumMilliseconds = MaximumBufferMilliseconds)
+    {
+        if (!Enum.IsDefined(channelRoute)) throw new ArgumentOutOfRangeException(nameof(channelRoute));
+        _channelRoute = channelRoute;
         _capacityFrames = Math.Max(1, maximumMilliseconds / FrameMilliseconds);
     }
 
@@ -46,6 +56,12 @@ public sealed class PcmFrameBuffer : IAsyncDisposable
 
     public long Overruns => Interlocked.Read(ref _overruns);
     public long Underruns => Interlocked.Read(ref _underruns);
+
+    public void ResetStatistics()
+    {
+        Interlocked.Exchange(ref _overruns, 0);
+        Interlocked.Exchange(ref _underruns, 0);
+    }
 
     public int TrimToLatest(int framesToKeep = 1)
     {
@@ -67,6 +83,7 @@ public sealed class PcmFrameBuffer : IAsyncDisposable
         if (pcmFrame.Length != BytesPerFrame) return;
 
         var copy = pcmFrame.ToArray();
+        RouteChannelInPlace(copy);
         lock (_queueGate)
         {
             if (_completed) return;
@@ -76,6 +93,26 @@ public sealed class PcmFrameBuffer : IAsyncDisposable
                 Interlocked.Increment(ref _overruns);
             }
             _queue.Enqueue(copy);
+        }
+    }
+
+    private void RouteChannelInPlace(Span<byte> pcmFrame)
+    {
+        if (_channelRoute == AudioChannelRoute.Stereo) return;
+
+        var sourceChannelOffset = _channelRoute == AudioChannelRoute.LeftAsMono
+            ? 0
+            : BytesPerSample;
+        var sampleStride = Channels * BytesPerSample;
+        for (var offset = 0; offset < pcmFrame.Length; offset += sampleStride)
+        {
+            var source = offset + sourceChannelOffset;
+            var low = pcmFrame[source];
+            var high = pcmFrame[source + 1];
+            pcmFrame[offset] = low;
+            pcmFrame[offset + 1] = high;
+            pcmFrame[offset + BytesPerSample] = low;
+            pcmFrame[offset + BytesPerSample + 1] = high;
         }
     }
 

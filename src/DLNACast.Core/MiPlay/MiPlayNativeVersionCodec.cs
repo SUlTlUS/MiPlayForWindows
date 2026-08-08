@@ -13,6 +13,22 @@ public static class MiPlayNativeVersionCodec
         sequence,
         Encoding.ASCII.GetBytes(MiPlayProtocolConstants.NativeSourceVersion18_0_0_3Payload));
 
+    public static byte[] EncodeSourceVersion(ushort sequence, string sourceVersion)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(sourceVersion);
+        if (sourceVersion.Any(character => character is < '!' or > '~'))
+        {
+            throw new ArgumentException(
+                "The native source version must contain printable ASCII characters only.",
+                nameof(sourceVersion));
+        }
+
+        return MiPlayCommandFrameCodec.Encode(
+            MiPlayProtocolConstants.NativeSourceVersionCommand,
+            sequence,
+            Encoding.ASCII.GetBytes(sourceVersion + "\0"));
+    }
+
     public static bool TryDecodeAcknowledgement(
         ReadOnlySpan<byte> frameData,
         out ushort sequence,

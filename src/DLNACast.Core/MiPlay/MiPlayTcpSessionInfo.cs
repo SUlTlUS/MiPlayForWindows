@@ -40,6 +40,18 @@ public sealed record MiPlayTcpSessionInfo
         LocalAddress.ToString(),
         LocalPort);
 
+    /// <summary>
+    /// Reproduces the type-1 key that the connected peer derives when it is the
+    /// CmdSource side of the same TCP session. This is needed by a bounded test
+    /// receiver because the native source always hashes its peer endpoint before
+    /// its local endpoint.
+    /// </summary>
+    public string DeriveType1SafetyKeyForPeerSourceRole() => MiPlaySafetyKeyDerivation.DeriveType1(
+        LocalAddress.ToString(),
+        LocalPort,
+        PeerAddress.ToString(),
+        PeerPort);
+
     private static void ValidateIpv4Endpoint(
         IPAddress address,
         ushort port,

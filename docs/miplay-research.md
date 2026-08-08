@@ -1,6 +1,6 @@
 # MiPlay / MiConnect 实验协议研究
 
-> 更新：2026-07-19  
+> 更新：2026-07-21
 > 范围：本记录只覆盖本项目的离线协议实现、两台小爱音箱 S12 的被动发现/连接观察，以及对本地 Android 样本的静态分析。它不表示 Windows 端已经具备可用的 MiPlay 投送能力。
 
 `DLNACast.Core.MiPlay` 与正常 DLNA 投送流程隔离。目前代码只包含可离线测试的发现、帧编解码和诊断原语；在完整握手得到验证前，不会主动向真实音箱发送猜测性的 MiPlay 报文。
@@ -17,6 +17,7 @@
 
 - `1155/TCP` 以及大小端互换值 `33540/TCP` 在两台 S12 上均不可用，而 `8899/TCP` 可以接受连接。因此 `0x0483` 目前只能视为 `appsData` 中观察到的应用元数据/旧值，不能作为 S12 的公开可用端口。
 - TCP 8899 会先发出一个命令为 `0x0028`、负载是 16–17 位十进制字符串的帧；它**不等同于**现代 JSON/OPack SafetyAuth（`0x1402`）。在同一原生样本的 `CmdSource::onRecvCmd` 中已恢复其旧式挑战路径：收到 `0x0028` 后，以同序号发送 `0x0029` 的 HMAC-SHA1 文本，随后才发起现代 `0x1400` SafetyInfo。尚未通过实机确认挑战由哪一端生成、是否所有固件版本一致，或此后会话能否完成。
+- LX06 当前固件 ROM 版本按用户确认只以 `1.94.13` 为准。历史真机记录中的 `0x0037 = 2.1.5091615\0` / `2.1.4052010\0` 仅保留为 8899 控制会话里设备返回的版本帧原始值，不能再解释为 LX06 固件版本。
 
 ## 实机发现：MiConnect 与设备归属
 
@@ -326,6 +327,10 @@ response  = lowercaseHex(HMAC-SHA1(key = UTF-8(legacyKey), message = rawChalleng
 
 staged 版本已对单台 `192.168.10.4` 执行一次：local TCP 端点为 `192.168.10.9:4079`，前置 `0x0036` / `0x0029` / `0x1400` 与完整 SafetyAuth 互验均成功；随后只发送 `0x001e getDeviceInfo` seq `0x0004`，SafetyData encryptedPayloadLength `25`。设备在累计 7 个 follow-up frame 后主动关闭 TCP；未收到 `0x001f getDeviceInfo ACK`，因此 staged probe 没有发送任何 `0x0058`。这把旧三帧结果进一步收窄为：S12 在当前 Windows 会话材料/状态下，对认证后的单条 `0x001e` 仍无可解密 ACK。
 
+2026-07-21 在用户明确授权后，对单台 `192.168.10.4` 做了一次最小真机复验，仅改变观察窗口：新增 `--miplay-post-auth-observe-seconds=20`，发送边界仍为 `0x0036(1)`、设备 `0x0028` 的同序号 `0x0029`、`0x1400(2)`、互相验证的 `0x1402/0x1403`，随后只发送空明文 SafetyData 加密的 `0x001e getDeviceInfo` seq `0x0004`。本次端点为 local `192.168.10.9:6081`、peer `192.168.10.4:8899`；设备首帧 `0x0028` seq `0x0195`，随后仍回 `0x0037 = 2.1.5091615\0` 与三个 `0x0022` notify；`0x1401 result=0` 后本端 `0x1402` seq `0x0003` 被设备 `0x1403` 验证，设备 `0x1402` seq `0x0000` 也被本端 `0x1403` 回复验证。发送 `0x001e` 后设备立即关闭 TCP，未进入 20 秒等待窗口，也未收到 `0x001f`。本轮未发送 `0x0058`、heartbeat、openDevice、RTSP、播放、媒体或音频帧。
+
+结合 LX06 `1.88.51` 固件的 `mpas` 反汇编，`0x001e` handler 已由 `0x6825c cmp #0x1e` 和 `0x68350 mov r1,#31` 静态证明存在；继续离线追踪后又确认 uncached 分支 `0x69ad8` 会建立异步回调，完成函数 `0x65320` 在 `0x65398` 设置 `r0+0x2c0=1`，从保存的 header offset `0x83` 读取原请求序号，并在 `0x65430` 通过 `0x368bc` 发送 `0x001f`。因此这次失败不应再归因于“缺少 handler”“观察 5 秒太短”或“异步路径本身不会 ACK”。更合理的下一步是离线追 post-auth SafetyData 收包/命令会话入口：设备是否接受第三个出站 CBC 帧、是否在 SafetyAuth 后重置或切换命令加密状态、以及 `CtrlClient`/`ServerApp` 上下文是否满足 `doMpasCommand` 前置条件。
+
 #### 2026-07-20 单次 post-auth getDeviceInfo 诊断复验
 
 在新增只读 SafetyData 解密失败诊断后，对单台 `192.168.10.4` 执行一次 `--miplay-native-safety-mutual-auth-device-info-probe=<IPv4>` 复验。发送边界仍为：完整 SafetyAuth 互验成功后，只额外发送一次 SafetyData 加密空 payload 的 `0x001e getDeviceInfo`；随后只读观察，不发送 `0x0058 setLocalDeviceInfo`、heartbeat、RTSP、音频、播放、openDevice、媒体或其他业务控制帧。
@@ -503,7 +508,7 @@ authKey = MD5(source)
 
 因此，精确版本探针中 S12 返回的开头 `00 07 01 E0 02 00 EC AE 89` 可以确定地解释为：完整头长 `0x0007 + 2 = 9`、V1、三个标志均置位、填充长度 `2`、大端完整性值 `0x00ECAE89`，密文起点为偏移 9。这是静态恢复与真机原始字节的直接匹配，不是对 `0x0007` 的猜测。
 
-项目中的 `MiPlaySafetyDataHeaderCodec.TryDecodeVersion1` 只解析这套已确认的结构并保留元数据；它不实现 `av_crc_miplay`、不导出或推导会话材料、不解密负载，也不连接或发送网络数据。对应单元测试使用上面的 S12 原始 `0x1402` 字节，确认头长、三个标志、填充值、完整性值与负载偏移；该阶段测试总数为 71；当前总数见文末。`MiPlaySafetyDataDiagnostics` 在 post-auth 解密失败时只给出 header/CRC/长度类别摘要，不尝试 AES、不打印密钥、不推进 CBC state。
+项目中的 `MiPlaySafetyDataHeaderCodec.TryDecodeVersion1` 只解析这套已确认的结构并保留元数据；它不导出或推导会话材料、不解密负载，也不连接或发送网络数据。对应单元测试使用上面的 S12 原始 `0x1402` 字节，确认头长、三个标志、填充值、完整性值与负载偏移；该阶段测试总数为 71；当前总数见文末。后续当前 `com.milink.service:audio` 原生库复核进一步确认：SafetyData v1 头里的完整性字段按 native 值大端存储；项目本地 `ComputeCrc32Mpeg2` accumulator 对该样本给出 `89 AE EC 00`，而 wire/header 值为 `00 EC AE 89`，因此 codec 使用 `ComputeNativeWireIntegrityValue` 先做字节反转再以大端读写。`MiPlaySafetyDataDiagnostics` 在 post-auth 解密失败时只给出 header/CRC/长度类别摘要，不尝试 AES、不打印密钥、不推进 CBC state。
 
 ### SafetyAuth 应答与 HMAC 文本
 
@@ -654,3 +659,20 @@ The packaged `AndroidManifest.xml` and `resources.arsc` entries do not contain `
 `libidmservicemgr.so` does contain a contiguous `ServiceTypeIds.cc` rodata cluster named `SMGR_ServiceTypeIds`. The observed order is `multi-screen-collaboration`, `micast-tv`, `miplay-audio`, `input`, `handoff`, `idm-test`, `notification-local`, `mihome-hub`, and `milink`; the exact MiPlay audio URN is `urn:aiot-spec-v3:com.mi.idm:service:miplay-audio:00017803:1.0`. This is an IDM/ServiceManager service-type identifier, not a Continuity `ServiceName.toMergeString()` value. A Continuity service name is shaped like `package:name` or `:name`; the IDM URN has its own `urn:aiot-spec-v3:[vendor:]service:name:typeId:version` grammar.
 
 The repository now has `MiPlayIdmServiceType` and tests that parse the native IDM URN, preserve the observed `SMGR_ServiceTypeIds` service-name order, and reject Continuity-style service names as IDM service types. This keeps the two namespaces separate in future analysis. Updated hypothesis: S12 mDNS advertising app id `5` and IDM service type `00017803` establish that the device supports MiPlay audio discovery, but they still do not supply the Android Binder/static-listener state needed for the post-auth `getDeviceInfo` success path. The next offline target should be native IDM registration/update flows (`nativeRegisterIotService`, `nativeRegisterIDMServer`, `nativeUpdateService`) and whether any AppMgr/CloudCtrl path binds service type `00017803` to a running package/service identity.
+
+## 2026-08-07 current DHCP identity correction
+
+IP addresses in the historical tables above are observation-time endpoints,
+not stable speaker identities. Fresh same-day phone logs establish the current
+mapping used by the audible validation:
+
+- `192.168.10.3` = `小爱音箱-7503` = `次卧的小爱音箱 Pro`;
+- `192.168.10.4` = `小爱音箱-6333` = `客厅的小爱音箱 Art`.
+
+The old labels that equated `.4` with `7503` and `.7` with `6333` are stale and
+must not be used for present device selection. Future discovery/UI code must
+bind the current endpoint to the stable device ID and friendly name. The
+successful bounded Windows system-audio session targeted `.3`; the receiver
+light bar activated and the user confirmed audible output. Full wire and media
+details are pinned in `MiPlayLegacyProAudibleSystemAudioLiveValidationEvidence`
+and `docs/miplay-windows-audio-source-transmitter.md`.
