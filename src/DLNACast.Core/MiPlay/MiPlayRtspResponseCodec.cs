@@ -12,7 +12,7 @@ public sealed record MiPlayRtspHeader(string Name, string Value);
 public static class MiPlayRtspResponseCodec
 {
     public static byte[] EncodeOk(int cseq, IEnumerable<MiPlayRtspHeader>? headers = null) =>
-        Encode(200, "OK", cseq, headers, ReadOnlySpan<byte>.Empty);
+        Encode(200, "OK", cseq, headers, []);
 
     public static byte[] EncodeOk(int cseq, ReadOnlySpan<byte> body, IEnumerable<MiPlayRtspHeader>? headers = null) =>
         Encode(200, "OK", cseq, headers, body);

@@ -25,7 +25,7 @@ public sealed class MiPlayPairSynchronization
 
     private sealed class PhaseBarrier(int participantCount)
     {
-        private readonly object gate = new();
+        private readonly Lock gate = new();
         private readonly TaskCompletionSource completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int arrivals;

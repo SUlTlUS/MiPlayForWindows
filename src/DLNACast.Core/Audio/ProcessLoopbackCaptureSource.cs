@@ -5,16 +5,14 @@ using DLNACast.Core.Models;
 
 namespace DLNACast.Core.Audio;
 
-public sealed class ProcessLoopbackCaptureSource : IAudioCaptureSource
+public sealed class ProcessLoopbackCaptureSource(CaptureSelection.Process selection) : IAudioCaptureSource
 {
-    private readonly CaptureSelection.Process _selection;
+    private readonly CaptureSelection.Process _selection = selection;
     private CancellationTokenSource? _lifetime;
     private Task? _captureLoop;
     private IAudioClientNative? _audioClient;
     private IAudioCaptureClientNative? _captureClient;
     private readonly CaptureHealthTracker _health = new();
-
-    public ProcessLoopbackCaptureSource(CaptureSelection.Process selection) => _selection = selection;
 
     public CaptureSelection Selection => _selection;
     public bool IsRunning => _captureLoop is { IsCompleted: false };
@@ -150,10 +148,7 @@ public sealed class ProcessLoopbackCaptureSource : IAudioCaptureSource
             _captureLoop = null;
         }
 
-        if (_audioClient is not null)
-        {
-            _audioClient.Stop();
-        }
+        _audioClient?.Stop();
 
         ReleaseComObject(ref _captureClient);
         ReleaseComObject(ref _audioClient);

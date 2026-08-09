@@ -129,5 +129,5 @@ public sealed class PcmFrameBufferTests
             new PcmFrameBuffer((AudioChannelRoute)99));
     }
 
-    private static byte[] Filled(byte value) => Enumerable.Repeat(value, PcmFrameBuffer.BytesPerFrame).ToArray();
+    private static byte[] Filled(byte value) => [.. Enumerable.Repeat(value, PcmFrameBuffer.BytesPerFrame)];
 }

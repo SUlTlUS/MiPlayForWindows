@@ -109,12 +109,8 @@ if (legacyTonePlaybackArgument is not null)
     }
 
     var ffmpegArgument = args.FirstOrDefault(argument =>
-        argument.StartsWith("--miplay-ffmpeg=", StringComparison.OrdinalIgnoreCase));
-    if (ffmpegArgument is null)
-    {
-        throw new ArgumentException(
+        argument.StartsWith("--miplay-ffmpeg=", StringComparison.OrdinalIgnoreCase)) ?? throw new ArgumentException(
             "The tone validation requires --miplay-ffmpeg=<absolute ffmpeg.exe path>.");
-    }
     var ffmpegPath = ffmpegArgument[(ffmpegArgument.IndexOf('=') + 1)..];
 
     using var playbackTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
@@ -154,12 +150,8 @@ if (legacySystemAudioPlaybackArgument is not null)
     }
 
     var ffmpegArgument = args.FirstOrDefault(argument =>
-        argument.StartsWith("--miplay-ffmpeg=", StringComparison.OrdinalIgnoreCase));
-    if (ffmpegArgument is null)
-    {
-        throw new ArgumentException(
+        argument.StartsWith("--miplay-ffmpeg=", StringComparison.OrdinalIgnoreCase)) ?? throw new ArgumentException(
             "The system-audio validation requires --miplay-ffmpeg=<absolute ffmpeg.exe path>.");
-    }
     var ffmpegPath = ffmpegArgument[(ffmpegArgument.IndexOf('=') + 1)..];
 
     using var playbackTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(50));
@@ -312,11 +304,11 @@ if (freshLegacyDeviceInfoReceiverArgument is not null)
 
     var profile = MiPlayPassiveSenderCaptureProfile.CreateDefault(localAddress);
     using var captureTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(captureSeconds));
-    ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+    void cancelHandler(object? _, ConsoleCancelEventArgs eventArgs)
     {
         eventArgs.Cancel = true;
         captureTimeout.Cancel();
-    };
+    }
     Console.CancelKeyPress += cancelHandler;
     try
     {
@@ -367,11 +359,11 @@ if (mutualAuthSenderCaptureArgument is not null)
 
     var profile = MiPlayPassiveSenderCaptureProfile.CreateDefault(localAddress);
     using var captureTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(captureSeconds));
-    ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+    void cancelHandler(object? _, ConsoleCancelEventArgs eventArgs)
     {
         eventArgs.Cancel = true;
         captureTimeout.Cancel();
-    };
+    }
     Console.CancelKeyPress += cancelHandler;
     try
     {
@@ -420,11 +412,11 @@ if (passiveSenderCaptureArgument is not null)
 
     var profile = MiPlayPassiveSenderCaptureProfile.CreateDefault(localAddress);
     using var captureTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(captureSeconds));
-    ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+    void cancelHandler(object? _, ConsoleCancelEventArgs eventArgs)
     {
         eventArgs.Cancel = true;
         captureTimeout.Cancel();
-    };
+    }
     Console.CancelKeyPress += cancelHandler;
     try
     {
@@ -1034,11 +1026,10 @@ static async Task ProbeMiPlayLegacySafetyAsync(
             officialPostAuthOutboundCipher = MiPlayPostAuthSafetyDataCipherProfile.CreateOutboundCommandCipher(
                 postAuthCandidate.AuthKey,
                 outboundProfile,
-                new[]
-                {
+                [
                     localSafetyAuthPlaintextForPostAuthDryRun,
                     localSafetyAuthAcknowledgementPlaintextForPostAuthDryRun,
-                });
+                ]);
             officialPostAuthSequenceSteps = readiness.Steps;
             officialPostAuthNextStepIndex = 0;
 
@@ -1105,11 +1096,10 @@ static async Task ProbeMiPlayLegacySafetyAsync(
             var outboundCipher = MiPlayPostAuthSafetyDataCipherProfile.CreateOutboundCommandCipher(
                 postAuthCandidate.AuthKey,
                 outboundProfile,
-                new[]
-                {
+                [
                     localSafetyAuthPlaintextForPostAuthDryRun,
                     localSafetyAuthAcknowledgementPlaintextForPostAuthDryRun,
-                });
+                ]);
             var getDeviceInfoFrame = MiPlayPostAuthGetDeviceInfoProbe.ToSafetyDataCommandFrame(
                 postAuthSequence,
                 outboundCipher);
@@ -1182,11 +1172,10 @@ static async Task ProbeMiPlayLegacySafetyAsync(
             var outboundCipher = MiPlayPostAuthSafetyDataCipherProfile.CreateOutboundCommandCipher(
                 postAuthCandidate.AuthKey,
                 outboundProfile,
-                new[]
-                {
+                [
                     localSafetyAuthPlaintextForPostAuthDryRun,
                     localSafetyAuthAcknowledgementPlaintextForPostAuthDryRun,
-                });
+                ]);
             var setPlaySourceFrame = MiPlaySetPlaySourceOneFrameProbe.ToSafetyDataCommandFrame(
                 postAuthSequence,
                 outboundCipher);
@@ -1378,7 +1367,7 @@ static async Task ProbeMiPlayLegacySafetyAsync(
             }
 
             var getDeviceInfoSequence = sendNativeBootstrap ? (ushort)4 : (ushort)3;
-            var getDeviceInfoPayload = postAuthCandidate.Cipher.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+            var getDeviceInfoPayload = postAuthCandidate.Cipher.EncryptVersion1([]);
             var getDeviceInfoFrame = MiPlayCommandFrameCodec.Encode(
                 MiPlayProtocolConstants.GetDeviceInfoCommand,
                 getDeviceInfoSequence,
@@ -1409,7 +1398,7 @@ static async Task ProbeMiPlayLegacySafetyAsync(
                 ? MiPlayProtocolConstants.GetDeviceInfoCommand
                 : MiPlayProtocolConstants.HeartbeatCommand;
             var postAuthName = sendPostAuthGetDeviceInfo ? "getDeviceInfo" : "heartbeat";
-            var postAuthPayload = postAuthCandidate.Cipher.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+            var postAuthPayload = postAuthCandidate.Cipher.EncryptVersion1([]);
             var postAuthSequence = sendNativeBootstrap ? (ushort)4 : (ushort)3;
             var postAuthFrame = MiPlayCommandFrameCodec.Encode(
                 postAuthCommand,
@@ -1867,16 +1856,16 @@ static async Task ProbeMiPlayLegacySafetyAsync(
                         }
 
                         selectedSafetyAuthCandidate = safetyAesCandidates[verifiedCandidateIndex];
-                        safetyAesCandidates = new List<(string Label, string AuthKey, MiPlaySafetyDataSessionCipher Cipher)>
-                        {
+                        safetyAesCandidates =
+                        [
                             selectedSafetyAuthCandidate.Value
-                        };
+                        ];
                         localSafetyAuthChallenge = MiPlaySafetyAuthCodec.CreateChallenge(GetUnixTimestampMicroseconds());
                         var localSafetyAuthPlaintext = MiPlaySafetyEnvelopeCodec.Encode(
                             isAcknowledgement: false,
                             MiPlayProtocolConstants.SafetyValueType,
                             localSafetyAuthChallenge.ToJsonPayload());
-                        localSafetyAuthPlaintextForPostAuthDryRun = localSafetyAuthPlaintext.ToArray();
+                        localSafetyAuthPlaintextForPostAuthDryRun = [.. localSafetyAuthPlaintext];
                         var localSafetyAuthData = selectedSafetyAuthCandidate.Value.Cipher.EncryptVersion1(localSafetyAuthPlaintext);
                         var localSafetyAuthSequence = sendNativeBootstrap ? (ushort)3 : (ushort)2;
                         var localSafetyAuthFrame = MiPlayCommandFrameCodec.Encode(
@@ -1991,7 +1980,7 @@ static async Task ProbeMiPlayLegacySafetyAsync(
                     isAcknowledgement: true,
                     MiPlayProtocolConstants.SafetyValueType,
                     safetyAuthAcknowledgement.ToJsonPayload());
-                localSafetyAuthAcknowledgementPlaintextForPostAuthDryRun = safetyAuthAcknowledgementPlaintext.ToArray();
+                localSafetyAuthAcknowledgementPlaintextForPostAuthDryRun = [.. safetyAuthAcknowledgementPlaintext];
                 var safetyAuthAcknowledgementData = matchedCandidate.Value.Cipher.EncryptVersion1(
                     safetyAuthAcknowledgementPlaintext);
                 var safetyAuthAcknowledgementFrame = MiPlayCommandFrameCodec.Encode(
@@ -2228,9 +2217,7 @@ static string? GetOptionValue(IEnumerable<string> args, string prefix)
 {
     var argument = args.FirstOrDefault(value =>
         value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-    return argument is null
-        ? null
-        : argument[prefix.Length..];
+    return argument?[prefix.Length..];
 }
 
 static long GetUnixTimestampMicroseconds()
@@ -2784,15 +2771,15 @@ static async Task RunMiPlaySystemLoopbackAacAnalysisAsync(
         ("aac_mf", 208_000),
         ("aac_mf", 192_000),
     };
-    foreach (var profile in profiles)
+    foreach (var (Codec, BitRate) in profiles)
     {
         try
         {
             var lengths = await EncodePcmForMiPlayAnalysisAsync(
                 ffmpegPath,
                 pcmFrames,
-                profile.Codec,
-                profile.BitRate,
+                Codec,
+                BitRate,
                 cancellationToken);
             var tableLimit = MiPlayMpegTsAudioMuxer.GetMaximumAdtsAccessUnitLength(includeProgramTables: true);
             var steadyLimit = MiPlayMpegTsAudioMuxer.GetMaximumAdtsAccessUnitLength(includeProgramTables: false);
@@ -2807,7 +2794,7 @@ static async Task RunMiPlaySystemLoopbackAacAnalysisAsync(
                                item.length > steadyLimit)
                 .ToArray();
             Console.WriteLine(
-                $"AAC profile codec={profile.Codec}, bitrate={profile.BitRate}, accessUnits={lengths.Count}, " +
+                $"AAC profile codec={Codec}, bitrate={BitRate}, accessUnits={lengths.Count}, " +
                 $"min={lengths.Min()}, max={lengths.Max()}, avg={lengths.Average():0.0}, " +
                 $"tableOverflows={tableOverflows.Length}, steadyOverflows={steadyOverflows.Length}, " +
                 $"firstTableOverflow={(tableOverflows.FirstOrDefault() is var first && first != default ? $"{first.index}:{first.length}" : "none")}.");
@@ -2815,7 +2802,7 @@ static async Task RunMiPlaySystemLoopbackAacAnalysisAsync(
         catch (Exception exception)
         {
             Console.WriteLine(
-                $"AAC profile codec={profile.Codec}, bitrate={profile.BitRate} unavailable: {exception.GetType().Name}: {exception.Message}");
+                $"AAC profile codec={Codec}, bitrate={BitRate} unavailable: {exception.GetType().Name}: {exception.Message}");
         }
     }
     Console.WriteLine("Offline real-output AAC analysis completed. No network operation occurred.");
@@ -3343,12 +3330,12 @@ static async Task SendPlaybackControlWritesAsync(
             throw new InvalidOperationException("Playback control must contain exactly one strict command frame per write.");
         }
 
-        var next = expected.Dequeue();
-        if (frame.Command != next.Command || frame.Sequence != next.Sequence ||
+        var (Command, Sequence) = expected.Dequeue();
+        if (frame.Command != Command || frame.Sequence != Sequence ||
             frame.Command == MiPlayProtocolConstants.AddMirrorCommand)
         {
             throw new InvalidOperationException(
-                $"Playback control ledger mismatch: got 0x{frame.Command:X4}/{frame.Sequence}, expected 0x{next.Command:X4}/{next.Sequence}.");
+                $"Playback control ledger mismatch: got 0x{frame.Command:X4}/{frame.Sequence}, expected 0x{Command:X4}/{Sequence}.");
         }
 
         await stream.WriteAsync(write.Frames[0], cancellationToken);

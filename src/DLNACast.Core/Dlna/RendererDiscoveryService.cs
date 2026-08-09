@@ -41,7 +41,7 @@ public sealed class RendererDiscoveryService : IRendererDiscovery
             }
         }
 
-        return devices.Values.OrderBy(device => device.FriendlyName, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        return [.. devices.Values.OrderBy(device => device.FriendlyName, StringComparer.CurrentCultureIgnoreCase)];
     }
 
     public ValueTask DisposeAsync()

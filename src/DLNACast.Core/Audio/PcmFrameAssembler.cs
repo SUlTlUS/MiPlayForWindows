@@ -1,12 +1,10 @@
 namespace DLNACast.Core.Audio;
 
-public sealed class PcmFrameAssembler
+public sealed class PcmFrameAssembler(PcmFrameBuffer destination)
 {
-    private readonly PcmFrameBuffer _destination;
+    private readonly PcmFrameBuffer _destination = destination;
     private readonly byte[] _pending = new byte[PcmFrameBuffer.BytesPerFrame];
     private int _pendingCount;
-
-    public PcmFrameAssembler(PcmFrameBuffer destination) => _destination = destination;
 
     public void Push(ReadOnlySpan<byte> pcm)
     {

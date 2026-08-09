@@ -1,11 +1,14 @@
 using DLNACast.App.ViewModels;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Graphics;
+using Windows.UI.ViewManagement;
 using WinRT.Interop;
 
 namespace DLNACast.App;
@@ -19,7 +22,9 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
     private readonly MainViewModel _viewModel;
     private readonly App _application;
     private readonly AppWindow _appWindow;
+    private readonly Storyboard _activeWaveformStoryboard;
     private bool _initialized;
+    private bool _waveformAnimationRunning;
 
     public MainWindow(MainViewModel viewModel, App application)
     {
@@ -28,8 +33,10 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         StartupTrace.Write("MainWindow: after InitializeComponent");
         _viewModel = viewModel;
         _application = application;
+        _activeWaveformStoryboard = (Storyboard)Root.Resources["ActiveWaveformStoryboard"];
         Root.DataContext = viewModel;
         Root.SizeChanged += OnRootSizeChanged;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -38,11 +45,44 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         var windowHandle = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(windowHandle);
         _appWindow = AppWindow.GetFromWindowId(windowId);
-        _appWindow.Title = "DLNA / MiPlay Cast for Windows";
+        _appWindow.Title = "MiPlay Cast";
         _appWindow.Resize(GetInitialWindowSize(windowHandle, windowId));
         _appWindow.Closing += OnClosing;
         Activated += OnActivated;
         StartupTrace.Write("MainWindow: constructor complete");
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(MainViewModel.IsCasting)) UpdateWaveformAnimation();
+    }
+
+    private void UpdateWaveformAnimation()
+    {
+        var shouldRun = _viewModel.IsCasting && AreAnimationsEnabled();
+        if (shouldRun == _waveformAnimationRunning) return;
+
+        if (shouldRun)
+        {
+            _activeWaveformStoryboard.Begin();
+        }
+        else
+        {
+            _activeWaveformStoryboard.Stop();
+        }
+        _waveformAnimationRunning = shouldRun;
+    }
+
+    private static bool AreAnimationsEnabled()
+    {
+        try
+        {
+            return new UISettings().AnimationsEnabled;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private static SizeInt32 GetInitialWindowSize(nint windowHandle, WindowId windowId)
@@ -69,7 +109,12 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
     {
         var useNarrowLayout = args.NewSize.Width < 900;
         PageLayout.Width = Math.Min(1180, args.NewSize.Width);
-        SideColumn.Width = new GridLength(useNarrowLayout ? 0 : 344);
+        SideColumn.Width = useNarrowLayout
+            ? new GridLength(0)
+            : new GridLength(1, GridUnitType.Star);
+        DeviceListScrollViewer.MaxHeight = Math.Max(
+            180,
+            args.NewSize.Height - (useNarrowLayout ? 280 : 390));
         Grid.SetColumnSpan(WorkflowPanel, useNarrowLayout ? 2 : 1);
         Grid.SetRow(DevicePanel, useNarrowLayout ? 2 : 1);
         Grid.SetColumn(DevicePanel, useNarrowLayout ? 0 : 1);

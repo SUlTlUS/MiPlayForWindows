@@ -32,7 +32,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private readonly SemaphoreSlim _discoveryGate = new(1, 1);
     private readonly SemaphoreSlim _selectionGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly object _sessionGate = new();
+    private readonly Lock _sessionGate = new();
     private readonly Dictionary<string, DlnaSessionHandle> _dlnaSessions = [];
     private readonly Dictionary<string, MiPlaySessionHandle> _miPlaySessions = [];
     private AudioSourceItem? _selectedSource;
@@ -78,7 +78,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _dispatcher = dispatcher;
 
         RefreshRenderersCommand = new AsyncRelayCommand(RefreshRenderersAsync, () => !IsBusy);
-        RefreshSourcesCommand = new RelayCommand(RefreshSources, () => !IsCasting);
+        RefreshSourcesCommand = new RelayCommand(RefreshSources, () => !IsBusy);
         RefreshNetworkCommand = new RelayCommand(RefreshNetworkStatus);
         OpenNetworkSettingsCommand = new RelayCommand(OpenNetworkSettings);
     }
@@ -177,14 +177,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             var left = Renderers.First(renderer => renderer.IsLeftChannel);
             var right = Renderers.First(renderer => renderer.IsRightChannel);
-            var adjusted = StereoVolumeScaler.ScaleToMaster(left.Volume, right.Volume, requested);
+            var (Left, Right) = StereoVolumeScaler.ScaleToMaster(left.Volume, right.Volume, requested);
 
             _updatingStereoMasterVolume = true;
             try
             {
                 SetStereoMasterVolume(requested);
-                left.Volume = adjusted.Left;
-                right.Volume = adjusted.Right;
+                left.Volume = Left;
+                right.Volume = Right;
             }
             finally
             {
@@ -537,6 +537,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             if (!SetField(ref _isBusy, value)) return;
             RefreshRenderersCommand.RaiseCanExecuteChanged();
+            RefreshSourcesCommand.RaiseCanExecuteChanged();
             foreach (var renderer in Renderers) renderer.IsSelectionEnabled = !value;
             OnPropertyChanged(nameof(CanUseProcessCapture));
             OnPropertyChanged(nameof(CanUseSpeakerOnlyPlayback));
@@ -559,8 +560,36 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public string NetworkSummary { get => _networkSummary; private set => SetField(ref _networkSummary, value); }
     public string StatusText { get => _statusText; private set => SetField(ref _statusText, value); }
     public string ProfileText { get => _profileText; private set => SetField(ref _profileText, value); }
-    public string DiagnosticsText { get => _diagnosticsText; private set => SetField(ref _diagnosticsText, value); }
-    public string ErrorText { get => _errorText; private set => SetField(ref _errorText, value); }
+    public string DiagnosticsText
+    {
+        get => _diagnosticsText;
+        private set
+        {
+            if (!SetField(ref _diagnosticsText, value)) return;
+            OnPropertyChanged(nameof(DiagnosticsVisibility));
+        }
+    }
+    public string ErrorText
+    {
+        get => _errorText;
+        private set
+        {
+            if (!SetField(ref _errorText, value)) return;
+            OnPropertyChanged(nameof(ErrorVisibility));
+        }
+    }
+    public Visibility DiagnosticsVisibility => string.IsNullOrWhiteSpace(DiagnosticsText)
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+    public Visibility ErrorVisibility => string.IsNullOrWhiteSpace(ErrorText)
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+    public Visibility CastingStatusVisibility => IsCasting
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public Visibility InactiveStatusVisibility => IsCasting
+        ? Visibility.Collapsed
+        : Visibility.Visible;
     public int SelectedRendererCount => IsStereoSplitMode
         ? Renderers.Count(renderer => renderer.IsLeftChannel || renderer.IsRightChannel)
         : Renderers.Count(renderer => renderer.IsSelected);
@@ -623,8 +652,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private void RefreshSources()
     {
-        if (IsCasting) return;
-        var previous = SelectedSource?.Id ?? _settings.LastSourceId;
+        var isCasting = IsCasting;
+        var previousSource = SelectedSource;
+        var previous = previousSource?.Id ?? _settings.LastSourceId;
         IReadOnlyList<AudioSourceItem> items;
         try
         {
@@ -639,7 +669,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         Sources.Clear();
         foreach (var item in items) Sources.Add(item);
-        SelectedSource = Sources.FirstOrDefault(item => item.Id == previous) ?? Sources.FirstOrDefault();
+        if (isCasting && previousSource is not null && Sources.All(item => item.Id != previousSource.Id))
+        {
+            Sources.Insert(0, previousSource);
+        }
+
+        var refreshedSelection = Sources.FirstOrDefault(item => item.Id == previous) ?? Sources.FirstOrDefault();
+        if (isCasting)
+        {
+            SetSelectedSource(refreshedSelection ?? previousSource);
+        }
+        else
+        {
+            SelectedSource = refreshedSelection;
+        }
     }
 
     private async Task RefreshRenderersAsync()
@@ -795,29 +838,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             IsBusy = true;
             ErrorText = string.Empty;
-            StatusText = SystemLanguage.Select(
-                "正在启动左右声道投送…",
-                "Starting left/right channel casting…");
+            StatusText = IsMiPlayMode
+                ? SystemLanguage.Select("正在启动双音箱同步播放…", "Starting synchronized dual-speaker playback…")
+                : SystemLanguage.Select("正在启动左右声道投送…", "Starting left/right channel casting…");
             CaptureSelection selection = IsProcessMode
                 ? new CaptureSelection.Process(SelectedSource.ProcessId!.Value, SelectedSource.DisplayName, true)
                 : new CaptureSelection.SystemMix(SelectedSource.Id, SelectedSource.DisplayName);
             StartResult[] results;
             if (IsMiPlayMode)
             {
-                var synchronization = new MiPlayPairSynchronization();
-                results = await Task.WhenAll(
-                    StartMiPlayTargetAsync(
-                        left,
-                        selection,
-                        AudioChannelRoute.LeftAsMono,
-                        synchronization,
-                        waitUntilReady: true),
-                    StartMiPlayTargetAsync(
-                        right,
-                        selection,
-                        AudioChannelRoute.RightAsMono,
-                        synchronization,
-                        waitUntilReady: true));
+                results = await StartMiPlayPairAsync(left, right, selection);
             }
             else
             {
@@ -841,11 +871,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             };
             await _settingsStore.SaveAsync(_settings, _lifetime.Token);
             StatusText = SystemLanguage.Select(
-                $"立体声投送中：左 {left.FriendlyName} · 右 {right.FriendlyName}",
-                $"Stereo casting: left {left.FriendlyName} · right {right.FriendlyName}");
-            _logger.Info(SystemLanguage.Select(
-                $"已开始左右声道投送：左 {left.FriendlyName}，右 {right.FriendlyName}",
-                $"Started left/right casting: left {left.FriendlyName}, right {right.FriendlyName}"));
+                $"左 {left.FriendlyName} · 右 {right.FriendlyName}",
+                $"L {left.FriendlyName} · R {right.FriendlyName}");
+            _logger.Info(IsMiPlayMode
+                ? SystemLanguage.Select(
+                    $"已开始双音箱同步播放：{left.FriendlyName}，{right.FriendlyName}",
+                    $"Started synchronized dual-speaker playback: {left.FriendlyName}, {right.FriendlyName}")
+                : SystemLanguage.Select(
+                    $"已开始左右声道投送：左 {left.FriendlyName}，右 {right.FriendlyName}",
+                    $"Started left/right casting: left {left.FriendlyName}, right {right.FriendlyName}"));
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -865,6 +899,85 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             IsBusy = false;
             NotifyCastStateChanged();
             _selectionGate.Release();
+        }
+    }
+
+    private async Task<StartResult[]> StartMiPlayPairAsync(
+        RendererItemViewModel first,
+        RendererItemViewModel second,
+        CaptureSelection originalSelection)
+    {
+        ILocalOutputLease? firstLocalOutputLease = null;
+        ILocalOutputLease? secondLocalOutputLease = null;
+        MiPlaySharedAudioSession? sharedCapture = null;
+        try
+        {
+            var captureSelection = originalSelection;
+            if (IsSpeakerOnlyPlayback)
+            {
+                firstLocalOutputLease = await _localOutputs.RouteForCastAsync(
+                    originalSelection,
+                    _lifetime.Token);
+                secondLocalOutputLease = await _localOutputs.RouteForCastAsync(
+                    originalSelection,
+                    _lifetime.Token);
+                if (!Equals(
+                        firstLocalOutputLease.CaptureSelection,
+                        secondLocalOutputLease.CaptureSelection))
+                {
+                    throw new InvalidOperationException(
+                        "A MiPlay pair must capture one common routed output.");
+                }
+                captureSelection = firstLocalOutputLease.CaptureSelection;
+            }
+
+            sharedCapture = await MiPlaySharedAudioSession.StartAsync(
+                _audioCatalog,
+                captureSelection,
+                participantCount: 2,
+                _lifetime.Token);
+
+            var firstTask = StartMiPlayTargetAsync(
+                first,
+                captureSelection,
+                AudioChannelRoute.Stereo,
+                sharedAudioSession: sharedCapture,
+                preAcquiredLocalOutputLease: firstLocalOutputLease,
+                originalSelection: originalSelection,
+                waitUntilReady: true);
+            var secondTask = StartMiPlayTargetAsync(
+                second,
+                captureSelection,
+                AudioChannelRoute.Stereo,
+                sharedAudioSession: sharedCapture,
+                preAcquiredLocalOutputLease: secondLocalOutputLease,
+                originalSelection: originalSelection,
+                waitUntilReady: true);
+            firstLocalOutputLease = null;
+            secondLocalOutputLease = null;
+
+            var results = await Task.WhenAll(firstTask, secondTask);
+            if (results.Any(result => result.Error is not null))
+            {
+                await sharedCapture.DisposeAsync();
+            }
+            return results;
+        }
+        catch
+        {
+            if (sharedCapture is not null)
+            {
+                await sharedCapture.DisposeAsync();
+            }
+            if (firstLocalOutputLease is not null)
+            {
+                await firstLocalOutputLease.DisposeAsync();
+            }
+            if (secondLocalOutputLease is not null)
+            {
+                await secondLocalOutputLease.DisposeAsync();
+            }
+            throw;
         }
     }
 
@@ -909,7 +1022,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             };
             await _settingsStore.SaveAsync(_settings, _lifetime.Token);
             StatusText = ActiveSessionCount == 1
-                ? SystemLanguage.Select($"正在投送到 {renderer.FriendlyName}", $"Casting to {renderer.FriendlyName}")
+                ? GetSingleRendererStatusText(renderer)
                 : SystemLanguage.Select(
                     $"正在向 {ActiveSessionCount} 台音箱投送",
                     $"Casting to {ActiveSessionCount} speakers");
@@ -955,9 +1068,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             StatusText = ActiveSessionCount == 0
                 ? SystemLanguage.Select("投送已停止", "Casting stopped")
-                : SystemLanguage.Select(
-                    $"正在向 {ActiveSessionCount} 台音箱投送",
-                    ActiveSessionCount == 1 ? "Casting to 1 speaker" : $"Casting to {ActiveSessionCount} speakers");
+                : ActiveSessionCount == 1
+                    ? GetSingleRendererStatusText()
+                    : SystemLanguage.Select(
+                        $"正在向 {ActiveSessionCount} 台音箱投送",
+                        $"Casting to {ActiveSessionCount} speakers");
             _logger.Info(SystemLanguage.Select(
                 $"已停止向 {renderer.FriendlyName} 投送",
                 $"Stopped casting to {renderer.FriendlyName}"));
@@ -1190,7 +1305,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }));
         await RunOnUiAsync(() =>
         {
-            foreach (var result in results) result.Renderer.SetInitialVolume(result.Volume);
+            foreach (var (Renderer, Volume) in results) Renderer.SetInitialVolume(Volume);
             UpdateStereoMasterVolumeFromChannels();
         });
     }
@@ -1201,7 +1316,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AudioChannelRoute channelRoute = AudioChannelRoute.Stereo)
     {
         var coordinator = _coordinatorFactory();
-        EventHandler<CastDiagnostics> handler = (_, diagnostics) =>
+        void handler(object? _, CastDiagnostics diagnostics) =>
             OnDiagnosticsChanged(renderer, diagnostics);
         coordinator.DiagnosticsChanged += handler;
         var handle = new DlnaSessionHandle(renderer, coordinator, handler);
@@ -1231,17 +1346,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         CaptureSelection selection,
         AudioChannelRoute channelRoute = AudioChannelRoute.Stereo,
         MiPlayPairSynchronization? pairSynchronization = null,
+        MiPlaySharedAudioSession? sharedAudioSession = null,
+        ILocalOutputLease? preAcquiredLocalOutputLease = null,
+        CaptureSelection? originalSelection = null,
         bool waitUntilReady = false)
     {
         var transmitter = _miPlayTransmitterFactory();
-        EventHandler<MiPlayCastDiagnostics> handler = (_, diagnostics) =>
+        void handler(object? _, MiPlayCastDiagnostics diagnostics) =>
             OnMiPlayDiagnosticsChanged(renderer, diagnostics);
         transmitter.DiagnosticsChanged += handler;
-        var originalSelection = selection;
-        ILocalOutputLease? localOutputLease = null;
+        var sessionOriginalSelection = originalSelection ?? selection;
+        var localOutputLease = preAcquiredLocalOutputLease;
         try
         {
-            if (IsSpeakerOnlyPlayback)
+            if (IsSpeakerOnlyPlayback && localOutputLease is null)
             {
                 localOutputLease = await _localOutputs.RouteForCastAsync(selection, _lifetime.Token);
                 selection = localOutputLease.CaptureSelection;
@@ -1250,7 +1368,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 renderer,
                 transmitter,
                 handler,
-                originalSelection,
+                sessionOriginalSelection,
                 localOutputLease);
             lock (_sessionGate) _miPlaySessions[renderer.Udn] = handle;
             var request = new MiPlaySystemAudioRequest(
@@ -1258,7 +1376,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 selection,
                 MiPlayFfmpegLocator.RequireExecutable(),
                 channelRoute,
-                pairSynchronization);
+                pairSynchronization,
+                sharedAudioSession);
             if (waitUntilReady)
             {
                 await transmitter.StartAsync(request, _lifetime.Token);
@@ -1407,24 +1526,140 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
+    private (CastDiagnostics[] Dlna, MiPlayCastDiagnostics[] MiPlay) GetActiveSessionDiagnostics()
+    {
+        lock (_sessionGate)
+        {
+            return (
+                [.. _dlnaSessions.Values
+                    .Where(session => session.Coordinator.IsCasting)
+                    .Select(session => session.Coordinator.Diagnostics)],
+                [.. _miPlaySessions.Values
+                    .Where(session => session.Transmitter.IsActive)
+                    .Select(session => session.Transmitter.Diagnostics)]);
+        }
+    }
+
+    private string GetMultiRendererStatusText(int activeSessionCount)
+    {
+        if (IsStereoSplitMode)
+        {
+            var left = Renderers.FirstOrDefault(renderer => renderer.IsLeftChannel);
+            var right = Renderers.FirstOrDefault(renderer => renderer.IsRightChannel);
+            if (left is not null && right is not null)
+            {
+                return SystemLanguage.Select(
+                    $"左 {left.FriendlyName} · 右 {right.FriendlyName}",
+                    $"L {left.FriendlyName} · R {right.FriendlyName}");
+            }
+        }
+
+        return SystemLanguage.Select(
+            $"正在向 {activeSessionCount} 台音箱投送",
+            $"Casting to {activeSessionCount} speakers");
+    }
+
+    private string GetSingleRendererStatusText(RendererItemViewModel? preferredRenderer = null)
+    {
+        if (preferredRenderer is not null && HasSession(preferredRenderer.Udn))
+        {
+            return preferredRenderer.FriendlyName;
+        }
+
+        return Renderers.FirstOrDefault(renderer => HasSession(renderer.Udn))?.FriendlyName
+            ?? preferredRenderer?.FriendlyName
+            ?? SystemLanguage.Select("正在投送", "Casting");
+    }
+
+    private static string GetAggregateProfileText(
+        IReadOnlyList<CastDiagnostics> dlnaDiagnostics,
+        IReadOnlyList<MiPlayCastDiagnostics> miPlayDiagnostics)
+    {
+        if (miPlayDiagnostics.Count > 0 && dlnaDiagnostics.Count == 0) return "MiPlay AAC";
+        if (dlnaDiagnostics.Count > 0 && miPlayDiagnostics.Count > 0)
+        {
+            return SystemLanguage.Select("多协议", "Multiple protocols");
+        }
+
+        var profiles = dlnaDiagnostics
+            .Select(diagnostics => diagnostics.Profile)
+            .Distinct()
+            .ToArray();
+        if (profiles.Length != 1)
+        {
+            return SystemLanguage.Select("多种格式", "Multiple formats");
+        }
+
+        return profiles[0] switch
+        {
+            StreamProfile.PcmWave => "PCM / WAV",
+            StreamProfile.Mp3Cbr320 => "MP3 320 kbps",
+            _ => SystemLanguage.Select("正在连接", "Connecting")
+        };
+    }
+
+    private static string GetAggregateDiagnosticsText(
+        IReadOnlyList<CastDiagnostics> dlnaDiagnostics,
+        IReadOnlyList<MiPlayCastDiagnostics> miPlayDiagnostics)
+    {
+        var activeSessionCount = dlnaDiagnostics.Count + miPlayDiagnostics.Count;
+        var maximumBufferedMilliseconds = dlnaDiagnostics
+            .Select(diagnostics => diagnostics.BufferedMilliseconds)
+            .Concat(miPlayDiagnostics.Select(diagnostics => diagnostics.BufferedMilliseconds))
+            .DefaultIfEmpty()
+            .Max();
+        var overruns = dlnaDiagnostics.Sum(diagnostics => diagnostics.Overruns) +
+                       miPlayDiagnostics.Sum(diagnostics => diagnostics.Overruns);
+        var underruns = dlnaDiagnostics.Sum(diagnostics => diagnostics.Underruns) +
+                        miPlayDiagnostics.Sum(diagnostics => diagnostics.Underruns);
+
+        return SystemLanguage.Select(
+            $"{activeSessionCount} 个会话 · 最大缓冲 {maximumBufferedMilliseconds} 毫秒 · 溢出 {overruns} · 欠载 {underruns}",
+            $"{activeSessionCount} sessions · Max buffer {maximumBufferedMilliseconds} ms · Overruns {overruns} · Underruns {underruns}");
+    }
+
+    private void UpdateSessionDiagnostics(
+        RendererItemViewModel renderer,
+        string fallbackStatus,
+        string singleProfile,
+        string singleDiagnostics,
+        string? lastError)
+    {
+        var (dlna, miPlay) = GetActiveSessionDiagnostics();
+        var activeSessionCount = dlna.Length + miPlay.Length;
+        StatusText = activeSessionCount switch
+        {
+            > 1 => GetMultiRendererStatusText(activeSessionCount),
+            1 => GetSingleRendererStatusText(renderer),
+            _ => fallbackStatus
+        };
+        ProfileText = activeSessionCount > 1
+            ? GetAggregateProfileText(dlna, miPlay)
+            : singleProfile;
+        DiagnosticsText = activeSessionCount > 1
+            ? GetAggregateDiagnosticsText(dlna, miPlay)
+            : singleDiagnostics;
+        ErrorText = lastError ?? ErrorText;
+    }
+
     private void OnDiagnosticsChanged(RendererItemViewModel renderer, CastDiagnostics diagnostics) =>
         _ = RunOnUiAsync(() =>
         {
-            StatusText = ActiveSessionCount > 1
-                ? SystemLanguage.Select(
-                    $"{renderer.FriendlyName}：{diagnostics.Message}",
-                    $"{renderer.FriendlyName}: {diagnostics.Message}")
-                : diagnostics.Message;
-            ProfileText = diagnostics.Profile switch
+            var singleProfile = diagnostics.Profile switch
             {
                 StreamProfile.PcmWave => "PCM / WAV",
                 StreamProfile.Mp3Cbr320 => "MP3 320 kbps",
                 _ => SystemLanguage.Select("未连接", "Not connected")
             };
-            DiagnosticsText = SystemLanguage.Select(
+            var singleDiagnostics = SystemLanguage.Select(
                 $"应用缓冲 {diagnostics.BufferedMilliseconds} 毫秒（目标 60 毫秒） · 溢出 {diagnostics.Overruns} · 欠载 {diagnostics.Underruns}",
                 $"App buffer {diagnostics.BufferedMilliseconds} ms (60 ms target) · Overruns {diagnostics.Overruns} · Underruns {diagnostics.Underruns}");
-            ErrorText = diagnostics.LastError ?? ErrorText;
+            UpdateSessionDiagnostics(
+                renderer,
+                diagnostics.Message,
+                singleProfile,
+                singleDiagnostics,
+                diagnostics.LastError);
             if (diagnostics.State == CastSessionState.Streaming && DateTimeOffset.UtcNow >= _nextDiagnosticsLogAt)
             {
                 _logger.Info($"投送诊断：profile={ProfileText}, buffer={diagnostics.BufferedMilliseconds}ms, overruns={diagnostics.Overruns}, underruns={diagnostics.Underruns}");
@@ -1436,22 +1671,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private void OnMiPlayDiagnosticsChanged(RendererItemViewModel renderer, MiPlayCastDiagnostics diagnostics) =>
         _ = RunOnUiAsync(() =>
         {
-            StatusText = ActiveSessionCount > 1
-                ? SystemLanguage.Select(
-                    $"{renderer.FriendlyName}：{diagnostics.Message}",
-                    $"{renderer.FriendlyName}: {diagnostics.Message}")
-                : diagnostics.Message;
-            ProfileText = diagnostics.State == MiPlayCastState.Idle
+            var singleProfile = diagnostics.State == MiPlayCastState.Idle
                 ? SystemLanguage.Select("未连接", "Not connected")
                 : "MiPlay AAC";
-            DiagnosticsText = SystemLanguage.Select(
+            var singleDiagnostics = SystemLanguage.Select(
                 $"MiPlay 缓冲 {diagnostics.BufferedMilliseconds} 毫秒 · " +
                 $"音频单元 {diagnostics.AccessUnits} · RTP 帧 {diagnostics.RtpFrames} · " +
                 $"溢出 {diagnostics.Overruns} · 欠载 {diagnostics.Underruns}",
                 $"MiPlay buffer {diagnostics.BufferedMilliseconds} ms · " +
                 $"Audio units {diagnostics.AccessUnits} · RTP frames {diagnostics.RtpFrames} · " +
                 $"Overruns {diagnostics.Overruns} · Underruns {diagnostics.Underruns}");
-            ErrorText = diagnostics.LastError ?? ErrorText;
+            UpdateSessionDiagnostics(
+                renderer,
+                diagnostics.Message,
+                singleProfile,
+                singleDiagnostics,
+                diagnostics.LastError);
             if (!string.IsNullOrWhiteSpace(diagnostics.ProtocolEvidence))
             {
                 _logger.Info($"MiPlay wire evidence: {diagnostics.ProtocolEvidence}");
@@ -1487,6 +1722,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         foreach (var renderer in Renderers) renderer.IsSelectionEnabled = !IsBusy;
         OnPropertyChanged(nameof(IsCasting));
+        OnPropertyChanged(nameof(CastingStatusVisibility));
+        OnPropertyChanged(nameof(InactiveStatusVisibility));
         OnPropertyChanged(nameof(CanUseProcessCapture));
         OnPropertyChanged(nameof(CanChangeTransport));
         OnPropertyChanged(nameof(CanUseSpeakerOnlyPlayback));

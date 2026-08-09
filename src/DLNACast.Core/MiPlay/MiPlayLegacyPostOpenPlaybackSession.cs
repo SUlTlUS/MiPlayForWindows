@@ -23,18 +23,13 @@ public sealed record MiPlayLegacyPostOpenPlaybackTransition(
 /// deliberately excluded: they were artifacts of user playback actions in an
 /// earlier capture, not part of automatic receiver selection.
 /// </summary>
-public sealed class MiPlayLegacyPostOpenPlaybackSession
+public sealed class MiPlayLegacyPostOpenPlaybackSession(MiPlaySetMediaInfoPayload mediaInfo)
 {
     public const ushort SetMediaInfoSequence = 15;
     public const ushort FirstPeriodicHeartbeatSequence = 16;
 
-    private readonly byte[] mediaInfoPayload;
+    private readonly byte[] mediaInfoPayload = MiPlaySetMediaInfoPayloadCodec.Encode(mediaInfo);
     private MiPlayLegacyPostOpenPlaybackPhase phase = MiPlayLegacyPostOpenPlaybackPhase.Created;
-
-    public MiPlayLegacyPostOpenPlaybackSession(MiPlaySetMediaInfoPayload mediaInfo)
-    {
-        mediaInfoPayload = MiPlaySetMediaInfoPayloadCodec.Encode(mediaInfo);
-    }
 
     public MiPlayLegacyPostOpenPlaybackPhase Phase => phase;
     public int? ReceiverState { get; private set; }

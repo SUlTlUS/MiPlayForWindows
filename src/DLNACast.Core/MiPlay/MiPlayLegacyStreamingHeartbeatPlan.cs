@@ -31,7 +31,7 @@ public static class MiPlayLegacyStreamingHeartbeatPlan
             throw new ArgumentOutOfRangeException(nameof(mediaDurationMilliseconds));
         }
 
-        return Enumerable.Range(0, (int)count)
+        return [.. Enumerable.Range(0, (int)count)
             .Select(index =>
             {
                 var sequence = checked((ushort)(initialSequence + index));
@@ -42,8 +42,7 @@ public static class MiPlayLegacyStreamingHeartbeatPlan
                         MiPlayProtocolConstants.HeartbeatCommand,
                         sequence,
                         []));
-            })
-            .ToArray();
+            })];
     }
 
     public static long CalculateDueTimestamp(

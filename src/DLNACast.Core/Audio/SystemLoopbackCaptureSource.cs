@@ -5,15 +5,13 @@ using NAudio.Wave;
 
 namespace DLNACast.Core.Audio;
 
-public sealed class SystemLoopbackCaptureSource : IAudioCaptureSource
+public sealed class SystemLoopbackCaptureSource(CaptureSelection.SystemMix selection) : IAudioCaptureSource
 {
-    private readonly CaptureSelection.SystemMix _selection;
+    private readonly CaptureSelection.SystemMix _selection = selection;
     private WasapiLoopbackCapture? _capture;
     private CancellationTokenRegistration _cancellationRegistration;
     private int _stopping;
     private readonly CaptureHealthTracker _health = new();
-
-    public SystemLoopbackCaptureSource(CaptureSelection.SystemMix selection) => _selection = selection;
 
     public CaptureSelection Selection => _selection;
     public bool IsRunning => _capture?.CaptureState == CaptureState.Capturing;

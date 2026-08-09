@@ -825,12 +825,12 @@ public sealed class MiPlaySafetyProtocolTests
         var sender = new MiPlaySafetyDataSessionCipher(key, iv);
 
         var previousSafetyData = sender.EncryptVersion1("previous-auth-frame"u8);
-        var heartbeatSafetyData = sender.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+        var heartbeatSafetyData = sender.EncryptVersion1([]);
 
         Assert.Equal(25, heartbeatSafetyData.Length);
         Assert.Equal((byte)16, heartbeatSafetyData[4]);
         Assert.NotEqual(
-            MiPlaySafetyDataCodec.EncryptVersion1(ReadOnlySpan<byte>.Empty, key, iv),
+            MiPlaySafetyDataCodec.EncryptVersion1([], key, iv),
             heartbeatSafetyData);
 
         var heartbeatFrame = MiPlayCommandFrameCodec.Encode(
@@ -861,12 +861,12 @@ public sealed class MiPlaySafetyProtocolTests
         var sender = new MiPlaySafetyDataSessionCipher(key, iv);
 
         var previousSafetyData = sender.EncryptVersion1("previous-auth-frame"u8);
-        var getDeviceInfoSafetyData = sender.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+        var getDeviceInfoSafetyData = sender.EncryptVersion1([]);
 
         Assert.Equal(25, getDeviceInfoSafetyData.Length);
         Assert.Equal((byte)16, getDeviceInfoSafetyData[4]);
         Assert.NotEqual(
-            MiPlaySafetyDataCodec.EncryptVersion1(ReadOnlySpan<byte>.Empty, key, iv),
+            MiPlaySafetyDataCodec.EncryptVersion1([], key, iv),
             getDeviceInfoSafetyData);
 
         var getDeviceInfoFrame = MiPlayCommandFrameCodec.Encode(
@@ -897,7 +897,7 @@ public sealed class MiPlaySafetyProtocolTests
         var sender = new MiPlaySafetyDataSessionCipher(key, iv);
 
         var previousSafetyData = sender.EncryptVersion1("previous-auth-frame"u8);
-        var getDeviceInfoSafetyData = sender.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+        var getDeviceInfoSafetyData = sender.EncryptVersion1([]);
         var localDeviceInfoPayload = MiPlayLocalDeviceInfoPayloadCodec.EncodeSourceName(
             sourceName: "Windows",
             bluetoothMac: "",
@@ -941,7 +941,7 @@ public sealed class MiPlaySafetyProtocolTests
         var sender = new MiPlaySafetyDataSessionCipher(key, iv);
 
         var previousSafetyData = sender.EncryptVersion1("previous-auth-frame"u8);
-        var getDeviceInfoSafetyData = sender.EncryptVersion1(ReadOnlySpan<byte>.Empty);
+        var getDeviceInfoSafetyData = sender.EncryptVersion1([]);
         var sourceNamePayload = MiPlayLocalDeviceInfoPayloadCodec.EncodeSourceName(
             sourceName: "DLNACast Windows",
             bluetoothMac: null,

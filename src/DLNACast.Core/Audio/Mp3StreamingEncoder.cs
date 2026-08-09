@@ -3,16 +3,10 @@ using NAudio.Wave;
 
 namespace DLNACast.Core.Audio;
 
-internal sealed class Mp3StreamingEncoder : IAsyncDisposable
+internal sealed class Mp3StreamingEncoder(PcmFrameBuffer frames, CancellationToken cancellationToken) : IAsyncDisposable
 {
-    private readonly PcmFrameBuffer _frames;
-    private readonly CancellationToken _cancellationToken;
-
-    public Mp3StreamingEncoder(PcmFrameBuffer frames, CancellationToken cancellationToken)
-    {
-        _frames = frames;
-        _cancellationToken = cancellationToken;
-    }
+    private readonly PcmFrameBuffer _frames = frames;
+    private readonly CancellationToken _cancellationToken = cancellationToken;
 
     public async Task EncodeToAsync(Stream output)
     {

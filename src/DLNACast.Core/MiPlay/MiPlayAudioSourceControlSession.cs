@@ -43,7 +43,7 @@ public sealed class MiPlayAudioSourceControlSession
     {
         ArgumentNullException.ThrowIfNull(steps);
         ValidateStepOrder(steps);
-        this.steps = steps.ToArray();
+        this.steps = [.. steps];
     }
 
     public MiPlayAudioSourceControlPhase Phase => phase;

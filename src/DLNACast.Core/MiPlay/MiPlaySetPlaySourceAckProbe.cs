@@ -8,7 +8,7 @@ namespace DLNACast.Core.MiPlay;
 /// </summary>
 public static class MiPlaySetPlaySourceAckProbe
 {
-    public static ReadOnlySpan<byte> EmptyPlaintextPayload => ReadOnlySpan<byte>.Empty;
+    public static ReadOnlySpan<byte> EmptyPlaintextPayload => [];
 
     public static byte[] ToCommandFrame(ushort sequence) => MiPlayCommandFrameCodec.Encode(
         MiPlayProtocolConstants.SetPlaySourceCommand,

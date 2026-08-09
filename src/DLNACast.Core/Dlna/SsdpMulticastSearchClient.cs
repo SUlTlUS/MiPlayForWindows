@@ -30,11 +30,10 @@ public sealed class SsdpMulticastSearchClient
         var results = await Task.WhenAll(localAddresses.Select(address =>
             SearchFromAddressAsync(address, targets, duration, cancellationToken))).ConfigureAwait(false);
 
-        return results
+        return [.. results
             .SelectMany(locations => locations)
             .Distinct()
-            .OrderBy(location => location.AbsoluteUri, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            .OrderBy(location => location.AbsoluteUri, StringComparer.OrdinalIgnoreCase)];
     }
 
     public static IReadOnlyList<IPAddress> GetActiveMulticastIPv4Addresses()
@@ -70,7 +69,7 @@ public sealed class SsdpMulticastSearchClient
             }
         }
 
-        return addresses.OrderBy(address => address.ToString(), StringComparer.Ordinal).ToArray();
+        return [.. addresses.OrderBy(address => address.ToString(), StringComparer.Ordinal)];
     }
 
     private static async Task<IReadOnlyList<Uri>> SearchFromAddressAsync(
@@ -118,7 +117,7 @@ public sealed class SsdpMulticastSearchClient
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        return locations.ToArray();
+        return [.. locations];
     }
 
     private static byte[] CreateSearchRequest(string searchTarget)

@@ -8,11 +8,15 @@ using Microsoft.UI.Xaml;
 
 namespace DLNACast.App.ViewModels;
 
-public sealed class RendererItemViewModel : INotifyPropertyChanged, IDisposable
+public sealed class RendererItemViewModel(
+    RendererDevice device,
+    IRendererController controller,
+    AppLogger logger,
+    CancellationToken lifetimeToken) : INotifyPropertyChanged, IDisposable
 {
-    private readonly IRendererController _controller;
-    private readonly AppLogger _logger;
-    private readonly CancellationToken _lifetimeToken;
+    private readonly IRendererController _controller = controller;
+    private readonly AppLogger _logger = logger;
+    private readonly CancellationToken _lifetimeToken = lifetimeToken;
     private CancellationTokenSource? _volumeDebounce;
     private bool _isSelected;
     private bool _isLeftChannel;
@@ -22,19 +26,7 @@ public sealed class RendererItemViewModel : INotifyPropertyChanged, IDisposable
     private bool _updatingVolume;
     private double _volume = 30;
 
-    public RendererItemViewModel(
-        RendererDevice device,
-        IRendererController controller,
-        AppLogger logger,
-        CancellationToken lifetimeToken)
-    {
-        Device = device;
-        _controller = controller;
-        _logger = logger;
-        _lifetimeToken = lifetimeToken;
-    }
-
-    public RendererDevice Device { get; }
+    public RendererDevice Device { get; } = device;
     public string Udn => Device.Udn;
     public string FriendlyName => Device.FriendlyName;
     public string DeviceDescription => string.IsNullOrWhiteSpace(Device.ModelName)

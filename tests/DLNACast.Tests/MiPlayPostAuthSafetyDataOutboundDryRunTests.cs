@@ -57,7 +57,7 @@ public sealed class MiPlayPostAuthSafetyDataOutboundDryRunTests
         var error = Assert.Throws<ArgumentException>(() =>
             MiPlayPostAuthSafetyDataOutboundDryRun.CompareOfficialSetPlaySourceProfiles(
                 MiPlayPostAuthSafetyDataStateBoundaryEvidence.DeterministicVectorSyntheticAuthKey,
-                ReadOnlySpan<byte>.Empty,
+                [],
                 Encoding.ASCII.GetBytes(MiPlayPostAuthSafetyDataStateBoundaryEvidence.DeterministicPreAuth1403Plaintext),
                 sequence: 4));
 

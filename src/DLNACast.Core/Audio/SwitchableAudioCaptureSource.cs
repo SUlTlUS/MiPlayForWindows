@@ -7,22 +7,16 @@ namespace DLNACast.Core.Audio;
 /// Keeps one PCM destination alive while replacing the Windows capture source.
 /// Network streams and encoders can continue consuming the same frame buffer.
 /// </summary>
-public sealed class SwitchableAudioCaptureSource : IAudioCaptureSource
+public sealed class SwitchableAudioCaptureSource(
+    IAudioSourceCatalog audioSources,
+    CaptureSelection selection) : IAudioCaptureSource
 {
-    private readonly IAudioSourceCatalog _audioSources;
+    private readonly IAudioSourceCatalog _audioSources = audioSources ?? throw new ArgumentNullException(nameof(audioSources));
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IAudioCaptureSource? _active;
     private PcmFrameBuffer? _destination;
-    private CaptureSelection _selection;
+    private CaptureSelection _selection = selection ?? throw new ArgumentNullException(nameof(selection));
     private int _disposed;
-
-    public SwitchableAudioCaptureSource(
-        IAudioSourceCatalog audioSources,
-        CaptureSelection selection)
-    {
-        _audioSources = audioSources ?? throw new ArgumentNullException(nameof(audioSources));
-        _selection = selection ?? throw new ArgumentNullException(nameof(selection));
-    }
 
     public CaptureSelection Selection => _active?.Selection ?? _selection;
     public bool IsRunning => _active?.IsRunning == true;

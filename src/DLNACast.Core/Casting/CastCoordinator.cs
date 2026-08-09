@@ -7,12 +7,16 @@ using DLNACast.Core.Streaming;
 
 namespace DLNACast.Core.Casting;
 
-public sealed class CastCoordinator : IAsyncDisposable
+public sealed class CastCoordinator(
+    IAudioSourceCatalog audioSources,
+    IRendererController controller,
+    ILiveStreamServer streamServer,
+    ILocalOutputManager localOutputs) : IAsyncDisposable
 {
-    private readonly IAudioSourceCatalog _audioSources;
-    private readonly IRendererController _controller;
-    private readonly ILiveStreamServer _streamServer;
-    private readonly ILocalOutputManager _localOutputs;
+    private readonly IAudioSourceCatalog _audioSources = audioSources;
+    private readonly IRendererController _controller = controller;
+    private readonly ILiveStreamServer _streamServer = streamServer;
+    private readonly ILocalOutputManager _localOutputs = localOutputs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private CancellationTokenSource? _lifetime;
     private SwitchableAudioCaptureSource? _capture;
@@ -27,18 +31,6 @@ public sealed class CastCoordinator : IAsyncDisposable
     private CastDiagnostics _diagnostics = new(
         CastSessionState.Idle,
         Message: SystemLanguage.Select("空闲", "Idle"));
-
-    public CastCoordinator(
-        IAudioSourceCatalog audioSources,
-        IRendererController controller,
-        ILiveStreamServer streamServer,
-        ILocalOutputManager localOutputs)
-    {
-        _audioSources = audioSources;
-        _controller = controller;
-        _streamServer = streamServer;
-        _localOutputs = localOutputs;
-    }
 
     public CastDiagnostics Diagnostics => _diagnostics;
     public bool IsCasting => _diagnostics.State is CastSessionState.Preparing

@@ -67,6 +67,6 @@ public sealed class MiPlayMdnsDiscovery
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        return devices.Values.OrderBy(device => device.FriendlyName, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        return [.. devices.Values.OrderBy(device => device.FriendlyName, StringComparer.CurrentCultureIgnoreCase)];
     }
 }

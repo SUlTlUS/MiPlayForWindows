@@ -1,13 +1,7 @@
 namespace DLNACast.Core.Dlna;
 
-public sealed class UpnpException : Exception
+public sealed class UpnpException(int? errorCode, string message, Exception? innerException = null) : Exception(errorCode is null ? message : $"UPnP {errorCode}: {message}", innerException)
 {
-    public UpnpException(int? errorCode, string message, Exception? innerException = null)
-        : base(errorCode is null ? message : $"UPnP {errorCode}: {message}", innerException)
-    {
-        ErrorCode = errorCode;
-    }
-
-    public int? ErrorCode { get; }
+    public int? ErrorCode { get; } = errorCode;
 }
 

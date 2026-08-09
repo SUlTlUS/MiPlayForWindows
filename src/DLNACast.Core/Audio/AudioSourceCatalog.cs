@@ -17,11 +17,10 @@ public sealed class AudioSourceCatalog : IAudioSourceCatalog
     public IReadOnlyList<AudioSourceItem> GetOutputDevices()
     {
         using var enumerator = new MMDeviceEnumerator();
-        return enumerator
+        return [.. enumerator
             .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
             .Select(device => new AudioSourceItem(device.ID, device.FriendlyName))
-            .OrderBy(device => device.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-            .ToArray();
+            .OrderBy(device => device.DisplayName, StringComparer.CurrentCultureIgnoreCase)];
     }
 
     public IReadOnlyList<AudioSourceItem> GetCandidateProcesses()
@@ -51,11 +50,10 @@ public sealed class AudioSourceCatalog : IAudioSourceCatalog
             }
         }
 
-        return candidates
+        return [.. candidates
             .GroupBy(item => item.ProcessId)
             .Select(group => group.First())
-            .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-            .ToArray();
+            .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)];
     }
 
     public IAudioCaptureSource CreateCapture(CaptureSelection selection) => selection switch

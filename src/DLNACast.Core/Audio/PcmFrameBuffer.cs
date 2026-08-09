@@ -19,7 +19,7 @@ public sealed class PcmFrameBuffer : IAsyncDisposable
         1,
         Stopwatch.Frequency * FrameMilliseconds / 1000);
 
-    private readonly object _queueGate = new();
+    private readonly Lock _queueGate = new();
     private readonly Queue<byte[]> _queue = new();
     private readonly SemaphoreSlim _readClockGate = new(1, 1);
     private readonly int _capacityFrames;

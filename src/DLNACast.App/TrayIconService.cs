@@ -53,7 +53,7 @@ internal sealed class TrayIconService : IDisposable
             Flags = NifMessage | NifIcon | NifTip,
             CallbackMessage = WmAppTrayIcon,
             IconHandle = LoadIcon(IntPtr.Zero, new IntPtr(IdiApplication)),
-            Tip = "DLNA Cast for Windows",
+            Tip = "MiPlay Cast",
             Info = string.Empty,
             InfoTitle = string.Empty
         };

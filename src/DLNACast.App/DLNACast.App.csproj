@@ -9,8 +9,8 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <AssemblyName>DLNACast.App</AssemblyName>
     <RootNamespace>DLNACast.App</RootNamespace>
-    <AssemblyTitle>DLNA Cast for Windows</AssemblyTitle>
-    <Product>DLNA Cast for Windows</Product>
+    <AssemblyTitle>MiPlay Cast</AssemblyTitle>
+    <Product>MiPlay Cast</Product>
     <Version>0.2.4</Version>
     <FileVersion>0.2.4.0</FileVersion>
     <AssemblyVersion>0.2.4.0</AssemblyVersion>

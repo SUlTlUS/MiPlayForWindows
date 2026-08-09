@@ -160,7 +160,7 @@ public static class MiPlayRealPhonePostAuthCommandSequenceEvidence
             ("speaker-to-phone", MiPlayProtocolConstants.HeartbeatAcknowledgementCommand, 0x014f, 25, 0x10, 0xb23819b4, "heartbeat acknowledgement after SetPlaySource"),
         ];
 
-        return frames
+        return [.. frames
             .Select((frame, index) => new MiPlayRealPhonePostAuthCommandSequenceFrame(
                 index,
                 frame.Direction,
@@ -177,7 +177,6 @@ public static class MiPlayRealPhonePostAuthCommandSequenceEvidence
                     IsEncrypted: true,
                     HasPaddingLengthField: true,
                     HasIntegrityValue: true),
-                frame.Meaning))
-            .ToList();
+                frame.Meaning))];
     }
 }

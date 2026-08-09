@@ -20,6 +20,7 @@ public sealed record MiPlayPcm16SignalSnapshot(
 /// </summary>
 public sealed class MiPlayPcm16SignalMeter
 {
+    private readonly Lock gate = new();
     private long sampleCount;
     private long nonZeroSampleCount;
     private int peakAbsoluteSample;
@@ -34,30 +35,36 @@ public sealed class MiPlayPcm16SignalMeter
                 nameof(pcm));
         }
 
-        for (var offset = 0; offset < pcm.Length; offset += sizeof(short))
+        lock (gate)
         {
-            var sample = BinaryPrimitives.ReadInt16LittleEndian(pcm.Slice(offset, sizeof(short)));
-            var absolute = sample == short.MinValue ? 32_768 : Math.Abs(sample);
-            sampleCount++;
-            if (sample != 0)
+            for (var offset = 0; offset < pcm.Length; offset += sizeof(short))
             {
-                nonZeroSampleCount++;
+                var sample = BinaryPrimitives.ReadInt16LittleEndian(pcm.Slice(offset, sizeof(short)));
+                var absolute = sample == short.MinValue ? 32_768 : Math.Abs(sample);
+                sampleCount++;
+                if (sample != 0)
+                {
+                    nonZeroSampleCount++;
+                }
+                peakAbsoluteSample = Math.Max(peakAbsoluteSample, absolute);
+                var normalized = sample / 32_768d;
+                sumOfSquares += normalized * normalized;
             }
-            peakAbsoluteSample = Math.Max(peakAbsoluteSample, absolute);
-            var normalized = sample / 32_768d;
-            sumOfSquares += normalized * normalized;
         }
     }
 
     public MiPlayPcm16SignalSnapshot Snapshot()
     {
-        var rms = sampleCount == 0 ? 0 : Math.Sqrt(sumOfSquares / sampleCount);
-        return new MiPlayPcm16SignalSnapshot(
-            sampleCount,
-            nonZeroSampleCount,
-            peakAbsoluteSample,
-            peakAbsoluteSample / 32_768d,
-            rms,
-            rms == 0 ? double.NegativeInfinity : 20 * Math.Log10(rms));
+        lock (gate)
+        {
+            var rms = sampleCount == 0 ? 0 : Math.Sqrt(sumOfSquares / sampleCount);
+            return new MiPlayPcm16SignalSnapshot(
+                sampleCount,
+                nonZeroSampleCount,
+                peakAbsoluteSample,
+                peakAbsoluteSample / 32_768d,
+                rms,
+                rms == 0 ? double.NegativeInfinity : 20 * Math.Log10(rms));
+        }
     }
 }

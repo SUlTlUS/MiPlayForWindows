@@ -69,7 +69,7 @@ public static class MiPlayCapturedCommandStreamDecoder
                 if (nextMagic < 0)
                 {
                     bytesSkipped += tcpPayloadStream.Length - offset;
-                    offset = tcpPayloadStream.Length;
+                    _ = tcpPayloadStream.Length;
                     break;
                 }
 

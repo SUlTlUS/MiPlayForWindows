@@ -185,7 +185,7 @@ public sealed class MiPlayPassiveSenderMutualAuthCaptureSessionTests
         var firstPostAuthFrame = MiPlayCommandFrameCodec.Encode(
             MiPlayProtocolConstants.GetDeviceInfoCommand,
             sequence: 3,
-            phoneCipher.EncryptVersion1(ReadOnlySpan<byte>.Empty));
+            phoneCipher.EncryptVersion1([]));
         var capture = receiver.ProcessInboundFrame(firstPostAuthFrame);
 
         Assert.True(capture.Accepted);

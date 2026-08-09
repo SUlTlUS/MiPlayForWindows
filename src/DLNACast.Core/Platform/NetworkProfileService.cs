@@ -31,12 +31,12 @@ public sealed class NetworkProfileService
                 }
             }
 
-            var privateNetwork = connected.FirstOrDefault(item => item.Category is 1 or 2);
-            if (!string.IsNullOrWhiteSpace(privateNetwork.Name))
+            var (Name, Category) = connected.FirstOrDefault(item => item.Category is 1 or 2);
+            if (!string.IsNullOrWhiteSpace(Name))
             {
                 return new NetworkProfileStatus(true, SystemLanguage.Select(
-                    $"专用网络：{privateNetwork.Name}",
-                    $"Private network: {privateNetwork.Name}"));
+                    $"专用网络：{Name}",
+                    $"Private network: {Name}"));
             }
 
             var names = string.Join(

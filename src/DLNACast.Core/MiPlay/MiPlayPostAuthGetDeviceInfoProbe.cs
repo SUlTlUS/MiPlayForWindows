@@ -7,7 +7,7 @@ namespace DLNACast.Core.MiPlay;
 /// </summary>
 public static class MiPlayPostAuthGetDeviceInfoProbe
 {
-    public static ReadOnlySpan<byte> EmptyPlaintextPayload => ReadOnlySpan<byte>.Empty;
+    public static ReadOnlySpan<byte> EmptyPlaintextPayload => [];
 
     public static byte[] ToSafetyDataCommandFrame(ushort sequence, MiPlaySafetyDataSessionCipher cipher)
     {

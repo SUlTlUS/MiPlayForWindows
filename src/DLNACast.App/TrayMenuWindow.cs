@@ -27,7 +27,7 @@ internal sealed class TrayMenuWindow : Microsoft.UI.Xaml.Window
         _stopCasting = stopCasting;
         _exitApplication = exitApplication;
 
-        Title = SystemLanguage.Select("DLNA Cast 托盘菜单宿主", "DLNA Cast tray menu host");
+        Title = SystemLanguage.Select("MiPlay Cast 托盘菜单宿主", "MiPlay Cast tray menu host");
         _anchor = new Grid();
         Content = _anchor;
 
@@ -58,7 +58,7 @@ internal sealed class TrayMenuWindow : Microsoft.UI.Xaml.Window
         };
 
         menu.Items.Add(CreateMenuItem(
-            SystemLanguage.Select("打开 DLNA Cast", "Open DLNA Cast"),
+            SystemLanguage.Select("打开 MiPlay Cast", "Open MiPlay Cast"),
             "\uE8A7",
             (_, _) => _showMainWindow()));
         menu.Items.Add(CreateMenuItem(

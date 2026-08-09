@@ -4,7 +4,7 @@ public sealed class AppLogger
 {
     private const long MaximumLogBytes = 2 * 1024 * 1024;
     private readonly string _logDirectory;
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
 
     public AppLogger(string basePath)
     {

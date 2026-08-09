@@ -2,7 +2,7 @@ namespace DLNACast.App;
 
 internal static class StartupTrace
 {
-    private static readonly object Gate = new();
+    private static readonly Lock Gate = new();
     private static readonly string LogPath = GetLogPath();
 
     private static string GetLogPath()

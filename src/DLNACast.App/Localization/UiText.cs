@@ -9,6 +9,9 @@ public sealed class UiText
         "选择协议、播放设备与音频来源，然后开始投送。",
         "Choose a protocol, playback devices, and an audio source to start casting.");
     public string CastStatus => SystemLanguage.Select("投送状态", "Cast status");
+    public string CastStatusSubtitle => SystemLanguage.Select(
+        "实时连接与传输信息",
+        "Live connection and transport details");
     public string Transport => SystemLanguage.Select("传输方式", "Transport");
     public string TransportHint => SystemLanguage.Select("根据目标设备选择兼容协议", "Choose a compatible protocol for the target device");
     public string DlnaDescription => SystemLanguage.Select("兼容多数网络音箱", "Compatible with most network speakers");
@@ -17,7 +20,13 @@ public sealed class UiText
     public string AudioSource => SystemLanguage.Select("音频来源", "Audio source");
     public string AudioSourceHint => SystemLanguage.Select("选择整个输出设备或单个应用", "Choose an entire output device or a single app");
     public string AllOutputAudio => SystemLanguage.Select("输出设备全部声音", "All output device audio");
+    public string AllOutputAudioDescription => SystemLanguage.Select(
+        "投送当前输出设备的所有声音",
+        "Cast all audio from the current output device");
     public string AppAndChildren => SystemLanguage.Select("应用及其子进程", "App and child processes");
+    public string AppAndChildrenDescription => SystemLanguage.Select(
+        "仅投送所选应用及其子进程",
+        "Cast only the selected app and its child processes");
     public string SpeakersOnly => SystemLanguage.Select("仅音箱播放", "Speakers only");
     public string SpeakersOnlyTooltip => SystemLanguage.Select(
         "开启后自动切换到 DLNA Cast 虚拟扬声器，电脑不出声，仅所选音箱播放",

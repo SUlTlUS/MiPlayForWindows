@@ -107,7 +107,7 @@ public static class MiPlayMdnsMessageParser
             }
 
             var suffix = "." + serviceName;
-            return instances
+            return [.. instances
                 .Where(instance => instance.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                 .Select(instance =>
                 {
@@ -130,8 +130,7 @@ public static class MiPlayMdnsMessageParser
                         port,
                         txt);
                 })
-                .OrderBy(device => device.FriendlyName, StringComparer.CurrentCultureIgnoreCase)
-                .ToArray();
+                .OrderBy(device => device.FriendlyName, StringComparer.CurrentCultureIgnoreCase)];
         }
         catch (FormatException)
         {

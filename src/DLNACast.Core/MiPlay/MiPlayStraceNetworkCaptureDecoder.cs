@@ -282,7 +282,7 @@ public static partial class MiPlayStraceNetworkCaptureDecoder
         return new MiPlayStraceNetworkCaptureDecodeResult(
             chunks,
             frames,
-            issues.OrderBy(issue => issue.LineNumber).ToArray(),
+            [.. issues.OrderBy(issue => issue.LineNumber)],
             controlPort,
             ContainsRawPayloads: false);
     }
@@ -432,7 +432,7 @@ public static partial class MiPlayStraceNetworkCaptureDecoder
             var character = text[index];
             if (character == '"')
             {
-                payload = bytes.ToArray();
+                payload = [.. bytes];
                 return true;
             }
 

@@ -16,7 +16,7 @@ public static class MiPlayLegacyResumeRepetitionPlan
 
     public static IReadOnlyList<MiPlayLegacyResumeRepetition> Create(
         ushort firstSequence = 18) =>
-        CapturedDueMilliseconds.Select((due, index) =>
+        [.. CapturedDueMilliseconds.Select((due, index) =>
         {
             var sequence = checked((ushort)(firstSequence + index));
             return new MiPlayLegacyResumeRepetition(
@@ -26,5 +26,5 @@ public static class MiPlayLegacyResumeRepetitionPlan
                     MiPlayProtocolConstants.ResumeCommand,
                     sequence,
                     []));
-        }).ToArray();
+        })];
 }

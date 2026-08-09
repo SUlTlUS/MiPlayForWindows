@@ -44,7 +44,8 @@ public sealed record MiPlaySystemAudioRequest(
     CaptureSelection Selection,
     string FfmpegPath,
     AudioChannelRoute ChannelRoute = AudioChannelRoute.Stereo,
-    MiPlayPairSynchronization? PairSynchronization = null)
+    MiPlayPairSynchronization? PairSynchronization = null,
+    MiPlaySharedAudioSession? SharedAudioSession = null)
 {
     public void Validate()
     {
@@ -54,6 +55,18 @@ public sealed record MiPlaySystemAudioRequest(
         if (!Enum.IsDefined(ChannelRoute))
         {
             throw new ArgumentOutOfRangeException(nameof(ChannelRoute));
+        }
+        if (SharedAudioSession is not null && ChannelRoute != AudioChannelRoute.Stereo)
+        {
+            throw new ArgumentException(
+                "The shared MiPlay capture currently provides one full stereo PCM source.",
+                nameof(ChannelRoute));
+        }
+        if (SharedAudioSession is not null && PairSynchronization is not null)
+        {
+            throw new ArgumentException(
+                "Shared MiPlay capture already coordinates pair startup.",
+                nameof(PairSynchronization));
         }
         if (Renderer.Address.AddressFamily != AddressFamily.InterNetwork ||
             IPAddress.Any.Equals(Renderer.Address) ||
