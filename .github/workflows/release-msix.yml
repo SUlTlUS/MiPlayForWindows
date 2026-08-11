@@ -39,7 +39,14 @@ jobs:
         shell: pwsh
         run: |
           dotnet restore DLNACast.slnx
-          dotnet test tests\DLNACast.Tests\DLNACast.Tests.csproj -c Release -p:Platform=x64 --no-restore
+          # GitHub's hosted Windows runners have no default audio endpoint.
+          # The WindowsAudioPolicyTests are hardware integration checks and
+          # are covered by local validation on a desktop with an audio device.
+          dotnet test tests\DLNACast.Tests\DLNACast.Tests.csproj `
+              -c Release `
+              -p:Platform=x64 `
+              --no-restore `
+              --filter "FullyQualifiedName!~WindowsAudioPolicyTests"
 
       - name: Build and sign both MSIX packages
         shell: pwsh
