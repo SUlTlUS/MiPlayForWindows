@@ -151,7 +151,7 @@ foreach ($variant in $variants) {
     # `dotnet publish` omits the app's compiled WinUI resources for an unpackaged
     # project. A manually assembled MSIX still needs the root resources.pri and
     # XBF payloads so ms-appx:///MainWindow.xaml resolves under package identity.
-    $buildRoot = Join-Path $root 'src\DLNACast.App\bin\x64\Release'
+    $buildRoot = Join-Path $root 'src\DLNACast.App\bin\Release'
     $applicationPri = Get-ChildItem -LiteralPath $buildRoot -Filter 'DLNACast.App.pri' -Recurse |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
