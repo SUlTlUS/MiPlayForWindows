@@ -1,48 +1,90 @@
-# DLNA / MiPlay Cast for Windows
+# MiPlay Cast
 
-Windows 11 x64 上的实时音频投送工具。应用保留原有 DLNA PCM/WAV 与 320 kbps MP3 回退路径，同时提供已在 LX06 1.94.13 上验证可听、支持系统总音频与单独应用捕获的实验性 MiPlay 低延迟音频路径。
+把 Windows 正在播放的声音投到局域网音箱。
 
-## 当前功能
+项目同时支持普通 DLNA 音箱和小米音箱的 MiPlay 音频路径。DLNA 的兼容面更广，MiPlay 的延迟通常更低，但也更依赖具体型号和固件。它目前仍是一个面向自用和实验的 Windows 工具，不是通用投屏 SDK。
 
-- 原生 WinUI 3 主窗口、Mica 背景、远端音量和投送诊断。
-- 通知区图标直接通过 Windows Shell API 注册，右键菜单也是 WinUI 3 窗口，不加载 WPF/WinForms UI 栈。
-- WASAPI 共享模式系统回环，以及基于 `ActivateAudioInterfaceAsync` 的进程树回环。
-- 投送期间自动静音本机输出端点；停止、失败或退出时恢复投送前的静音状态。
-- 统一输出 44.1 kHz、16-bit、双声道、20 ms PCM 帧；无声时按时钟补静音。
-- PCM 以 60 ms 为抗抖目标、100 ms 为硬上限；音箱发起 GET 时会丢弃过时积压，再以严格的 20 ms 节拍发送 PCM/MP3 输入。
-- Rssdp 主动发现 MediaRenderer 1–3，自行解析设备 XML、DIDL-Lite 和 SOAP。
-- 仅向所选音箱 IP 提供随机令牌直播 URL，监听由实际路由确定的 LAN 地址和 TCP 49555–49565。
-- PCM/WAV 优先，协议协商或拉流失败时回退 MP3；播放异常按 0.5/1/2 秒重试。
-- 公用网络安全门：不会提权或自动修改 Windows 网络类别。
-- 主界面可在 DLNA 与 MiPlay 间显式选择；设备仍按 SSDP UDN 记忆，再使用本次发现得到的当前 IP，避免把 DHCP 地址当作稳定身份。
-- MiPlay 使用 Windows 系统或单独应用回环捕获、Media Foundation AAC-LC 48 kHz 双声道 256 kbps、MPEG-TS/RTP/WFD；单次最长 10 分钟。
-- MiPlay 保留真机成功账本，不发送 Pause、Resume 或 AddMirror，不自动重试、回退或切换目标；停止时取消会话并关闭自有连接。
+单音箱 MiPlay 已在小米音箱 LX06、固件 1.94.13 上实际听到声音。其他型号以及双音箱同步仍需要按设备验证。
 
-## 开发与验证
+## 能做什么
 
-需要 Windows 11 Build 22000 或更高版本，以及 .NET 10 SDK。界面使用 Windows App SDK 2.2 / WinUI 3。MiPlay 还需要带 `aac_mf` 的 `ffmpeg.exe`：程序依次检查 `DLNACAST_FFMPEG`、应用目录和 `PATH`。
+- 投送整个 Windows 输出设备的声音，或者只投送某个应用及其子进程。
+- 在 DLNA 和小米妙播（MiPlay）之间切换。
+- 选择一台音箱播放；也可以进入双音箱模式，为两台设备分别指定位置。
+- 在应用里调节音箱音量，查看连接状态、投送时长和传输诊断。
+- 关闭主窗口后继续在通知区运行，并从托盘快速切换音箱。
+- 配合项目内的虚拟音频驱动，让电脑本地不出声，只在音箱播放。
+
+## 开始使用
+
+使用条件：
+
+- Windows 11 x64，Build 22000 或更高版本
+- 电脑和音箱位于同一局域网
+
+从源码运行还需要 .NET 10 SDK；MSIX 是自包含版本，不需要单独安装 .NET。
+
+如果只用 DLNA，不需要另外安装 FFmpeg。MiPlay 需要一个带 `aac_mf` 编码器的 `ffmpeg.exe`，可以先检查：
+
+```powershell
+ffmpeg -hide_banner -encoders | findstr aac_mf
+```
+
+程序会依次从 `DLNACAST_FFMPEG` 环境变量、应用目录和 `PATH` 中查找 FFmpeg。
+
+从源码运行：
 
 ```powershell
 dotnet restore DLNACast.slnx
-dotnet build DLNACast.slnx -c Debug -p:Platform=x64
-dotnet test tests/DLNACast.Tests/DLNACast.Tests.csproj -c Debug -p:Platform=x64
-dotnet run --project tools/DLNACast.Probe/DLNACast.Probe.csproj -- --capture-smoke
-dotnet run --project tools/DLNACast.Probe/DLNACast.Probe.csproj -- --process-smoke
 dotnet run --project src/DLNACast.App/DLNACast.App.csproj -p:Platform=x64
 ```
 
-真实投送前，Windows 中音箱所在的家庭网络必须设为“专用网络”。DLNA 系统混音模式会静音所选输出设备，进程模式会静音默认多媒体输出设备；MiPlay 当前不修改本机静音状态。应用不安装虚拟声卡。Probe 中的真机参数具有显式确认门，不应当作只读命令使用。
+进入应用后：
 
-## 生成和安装 x64 MSIX
+1. 选择 DLNA 或小米妙播。
+2. 选择“输出设备全部声音”或“应用及其子进程”。
+3. 选择要播放的音箱。双音箱模式下再指定两台设备。
+4. 按需开启“仅音箱播放”。
+5. 勾选音箱后会自动开始投送；取消选择即可停止对应音箱。
 
-脚本会选择本机最新的 x64 `MakeAppx.exe` / `SignTool.exe`，生成自包含 WinUI 3 应用并签名。
+应用不会替你修改 Windows 的网络类型。发现不到音箱时，先确认网络是“专用网络”，再检查电脑和音箱是否真的处于同一网段；手动运行未打包版本时，也要允许 Windows 防火墙放行应用。
+
+## DLNA 和 MiPlay 的区别
+
+DLNA 走标准的 UPnP MediaRenderer 路径，优先发送 PCM/WAV；设备不接受或拉流失败时，可以回退到 MP3。它更容易兼容不同品牌的网络音箱，但最终延迟很大一部分取决于音箱固件自己的缓冲策略。
+
+双音箱 DLNA 会把左、右声道分别转成单声道，发送给两台音箱。这个功能不会把两台独立设备变成严格同步的专业音频系统，同型号音箱通常更合适。
+
+MiPlay 通过小米音箱的私有 AAC/WFD 音频路径发送，依赖 FFmpeg 的 `aac_mf` 编码器。单音箱主路径已经在 LX06 上验证可听；单应用捕获、不同固件以及双音箱仍应视为实验功能。当前 MiPlay 双音箱模式让两台设备共享同一份采集音频，并分别建立会话，不做 DLNA 那样的左右声道拆分。
+
+## “仅音箱播放”需要虚拟驱动
+
+“仅音箱播放”会把声音临时路由到 `DLNA Cast Virtual Speaker`，因此必须先安装项目内的虚拟音频驱动。没有安装驱动时，请关闭这个开关，普通投送仍然可以使用。
+
+系统音频模式会临时切换 Windows 的默认输出；单应用模式只改变所选应用的输出路由。正常停止投送或退出应用时，程序会恢复之前的设置。
+
+驱动目前是测试签名版本，安装需要 Windows 测试签名模式并重启。构建和安装方法见 [虚拟音频驱动说明](drivers/DLNACast.VirtualSpeaker/README.md)。驱动不会随 MSIX 自动安装。
+
+## 构建和测试
+
+```powershell
+dotnet restore DLNACast.slnx
+dotnet build DLNACast.slnx -c Release -p:Platform=x64
+dotnet test tests/DLNACast.Tests/DLNACast.Tests.csproj -c Release -p:Platform=x64
+```
+
+`tools/DLNACast.Probe` 是协议研究和真机排查工具，正常使用应用时不需要运行。它的一些参数会主动连接设备或发送协议帧，不应当作普通的只读诊断命令使用。
+
+## 生成 MSIX
+
+打包脚本会发布自包含的 x64 WinUI 3 应用，并使用开发证书签名：
 
 ```powershell
 $password = Read-Host '测试 PFX 密码' -AsSecureString
 .\scripts\package-msix.ps1 -ExportPassword $password
 ```
 
-首次安装开发签名包时，必须用“管理员 PowerShell”把证书放入本地计算机的“受信任的人”。仅导入“当前用户”会导致 `0x800B0109` / `0x80073CF0`。
+首次安装时，需要在管理员 PowerShell 中信任开发证书，再安装生成的包：
 
 ```powershell
 Import-Certificate `
@@ -52,12 +94,13 @@ Import-Certificate `
 Add-AppxPackage .\artifacts\DLNACast.Windows_0.2.4.0_x64.msix
 ```
 
-清单身份为 `DLNACast.Windows`，版本 `0.2.4.0`，发布者 `CN=DLNACast Development`。安装时只为 Private profile 注册 TCP 49555–49565 入站规则，卸载包时由 Windows 移除。
+证书如果只导入“当前用户”，安装时可能出现 `0x800B0109` 或 `0x80073CF0`。MSIX 只为专用网络注册 TCP 49555–49565 入站规则，卸载应用后由 Windows 移除。
 
-## 延迟边界
+## 已知边界
 
-界面中的缓冲数值不是声学端到端延迟。DLNA MediaRenderer 会在固件内再次缓冲 HTTP 媒体；MiPlay 则使用音箱的私有 AAC/WFD 接收路径，已证明可实际发声，但主应用的 10 分钟生命周期、手动停止和错误恢复仍需单独真机验收。
+- 界面显示的缓冲量不是从电脑到人耳的完整延迟，音箱固件还会继续缓冲。
+- MiPlay 是按真实设备行为适配的私有协议，不能保证所有小米音箱和固件都能使用。
+- 双音箱播放目前不承诺严格同步，尤其不适合对相位和延迟敏感的场景。
+- 项目不支持 AirPlay、QPlay、系统级多房间编组，也没有发布到 Microsoft Store。
 
-## 数据和隐私
-
-配置与滚动日志写入 MSIX `LocalState`（未打包运行时回退到 `%LOCALAPPDATA%\DLNACast`）。应用不保存原始音频，也不发送遥测。一次只连接一台音箱，不提供多房间同步、AirPlay、QPlay、自启动或 Microsoft Store 发布。
+配置和滚动日志写入 MSIX 的 `LocalState`；未打包运行时写入 `%LOCALAPPDATA%\DLNACast`。程序不保存原始音频，也不发送遥测。

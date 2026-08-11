@@ -274,6 +274,8 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         var encoderInputReady = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var meter = new MiPlayPcm16SignalMeter();
+        var sourceSilenceControl = new MiPlaySourceSilencePlaybackControl();
+        var sourcePlaybackControl = new ActiveSourcePlaybackControl();
         var encoderWriterTask = Task.Run(async () =>
         {
             try
@@ -286,7 +288,16 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                 {
                     var pcm = await pcmBuffer.ReadFrameOrSilenceAsync(encoderInputRun.Token)
                         .ConfigureAwait(false);
-                    meter.Add(pcm);
+                    var frameSignal = meter.Add(pcm);
+                    switch (sourceSilenceControl.Observe(frameSignal.ContainsAudibleSignal))
+                    {
+                        case MiPlaySourcePlaybackTransition.Pause:
+                            sourcePlaybackControl.SetDesiredPaused(true);
+                            break;
+                        case MiPlaySourcePlaybackTransition.Resume:
+                            sourcePlaybackControl.SetDesiredPaused(false);
+                            break;
+                    }
                     await encoder.WritePcmAsync(pcm, encoderInputRun.Token).ConfigureAwait(false);
                 }
             }
@@ -455,6 +466,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             postOpen,
             preOpenHeartbeatSentAt.Value,
             firstMediaSent.Task,
+            sourcePlaybackControl,
             receiverReady,
             evidence => report(new MiPlayCastDiagnostics(
                 MiPlayCastState.AwaitingReceiver,
@@ -564,11 +576,12 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                     }
                     else if (accessUnitIndex % 250 == 0)
                     {
-                        var signal = meter.Snapshot();
+                        var signal = meter.SnapshotAndReset();
                         var captureHealth = capture.Health;
                         protocolEvidence =
                             $"pcmSignal route={request.ChannelRoute},capturePackets={captureHealth.PacketCount}," +
                             $"captureLastAudible={captureHealth.LastAudiblePacketAt?.ToString("O") ?? "none"}," +
+                            $"receiverPaused={sourcePlaybackControl.ReceiverPaused}," +
                             $"routedSamples={signal.SampleCount},routedNonZero={signal.NonZeroSampleCount}," +
                             $"peak={signal.PeakNormalized:F6},rms={signal.RmsNormalized:F6}," +
                             $"rmsDbfs={signal.RmsDecibelsFullScale:F2},audible={signal.ContainsAudibleSignal}";
@@ -810,6 +823,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         MiPlayLegacyPostOpenPlaybackSession session,
         long preOpenHeartbeatSentAt,
         Task firstMediaSent,
+        ActiveSourcePlaybackControl sourcePlaybackControl,
         Action receiverReady,
         Action<string> reportEvidence,
         CancellationToken cancellationToken)
@@ -850,6 +864,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                 controlStream,
                 preOpenHeartbeatSentAt,
                 volumeControl,
+                sourcePlaybackControl,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
@@ -899,6 +914,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         NetworkStream stream,
         long preOpenHeartbeatSentAt,
         ActiveVolumeControl volumeControl,
+        ActiveSourcePlaybackControl sourcePlaybackControl,
         CancellationToken cancellationToken)
     {
         var sequence = new MiPlayLegacyRuntimeControlSequence();
@@ -906,6 +922,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             preOpenHeartbeatSentAt,
             MiPlayLegacyStreamingHeartbeatPlan.IntervalMilliseconds,
             Stopwatch.Frequency);
+        var receiverPaused = false;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -919,6 +936,22 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                     heartbeatDueAt,
                     MiPlayLegacyStreamingHeartbeatPlan.IntervalMilliseconds,
                     Stopwatch.Frequency);
+                continue;
+            }
+
+            if (sourcePlaybackControl.TryRead(out var shouldPause))
+            {
+                if (shouldPause == receiverPaused)
+                {
+                    continue;
+                }
+
+                var command = shouldPause
+                    ? sequence.PreparePause()
+                    : sequence.PrepareResume();
+                await ExecuteRuntimeControlAsync(stream, command, cancellationToken).ConfigureAwait(false);
+                receiverPaused = shouldPause;
+                sourcePlaybackControl.SetReceiverPaused(shouldPause);
                 continue;
             }
 
@@ -953,28 +986,31 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             }
             using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var volumeReady = volumeControl.WaitToReadAsync(wait.Token).AsTask();
+            var sourcePlaybackReady = sourcePlaybackControl.WaitToReadAsync(wait.Token).AsTask();
             var heartbeatDelay = Task.Delay(
                 TimeSpan.FromSeconds(remaining / (double)Stopwatch.Frequency),
                 wait.Token);
-            var completed = await Task.WhenAny(volumeReady, heartbeatDelay).ConfigureAwait(false);
+            var completed = await Task.WhenAny(volumeReady, sourcePlaybackReady, heartbeatDelay)
+                .ConfigureAwait(false);
             wait.Cancel();
-            if (ReferenceEquals(completed, volumeReady))
-            {
-                if (!await volumeReady.ConfigureAwait(false))
-                {
-                    throw new InvalidOperationException("The MiPlay volume command queue closed unexpectedly.");
-                }
-            }
-            else
+            foreach (var pending in new Task[] { volumeReady, sourcePlaybackReady, heartbeatDelay })
             {
                 try
                 {
-                    await volumeReady.ConfigureAwait(false);
+                    await pending.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (
                     wait.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                 }
+            }
+            if (ReferenceEquals(completed, volumeReady) && !volumeReady.Result)
+            {
+                throw new InvalidOperationException("The MiPlay volume command queue closed unexpectedly.");
+            }
+            if (ReferenceEquals(completed, sourcePlaybackReady) && !sourcePlaybackReady.Result)
+            {
+                throw new InvalidOperationException("The MiPlay source-playback command queue closed unexpectedly.");
             }
         }
     }
@@ -985,6 +1021,11 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         CancellationToken cancellationToken)
     {
         await WriteAsync(stream, command.CommandFrame, cancellationToken).ConfigureAwait(false);
+        if (!command.WaitForAcknowledgement)
+        {
+            return;
+        }
+
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(3));
         try
@@ -1288,6 +1329,31 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         MiPlayWfdMediaClock.ConvertStopwatchTicksToMicroseconds(
             Stopwatch.GetTimestamp(),
             Stopwatch.Frequency);
+
+    private sealed class ActiveSourcePlaybackControl
+    {
+        private readonly Channel<bool> desiredPaused = Channel.CreateBounded<bool>(
+            new BoundedChannelOptions(1)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.DropOldest,
+                AllowSynchronousContinuations = false,
+            });
+        private int receiverPaused;
+
+        public bool ReceiverPaused => Volatile.Read(ref receiverPaused) != 0;
+
+        public void SetDesiredPaused(bool value) => desiredPaused.Writer.TryWrite(value);
+
+        public bool TryRead(out bool value) => desiredPaused.Reader.TryRead(out value);
+
+        public ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken) =>
+            desiredPaused.Reader.WaitToReadAsync(cancellationToken);
+
+        public void SetReceiverPaused(bool value) =>
+            Volatile.Write(ref receiverPaused, value ? 1 : 0);
+    }
 
     private sealed class ActiveVolumeControl
     {

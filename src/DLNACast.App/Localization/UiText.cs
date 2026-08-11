@@ -12,6 +12,7 @@ public sealed class UiText
     public string CastStatusSubtitle => SystemLanguage.Select(
         "实时连接与传输信息",
         "Live connection and transport details");
+    public string CastDuration => SystemLanguage.Select("投送时间", "Casting duration");
     public string Transport => SystemLanguage.Select("传输方式", "Transport");
     public string TransportHint => SystemLanguage.Select("根据目标设备选择兼容协议", "Choose a compatible protocol for the target device");
     public string DlnaDescription => SystemLanguage.Select("兼容多数网络音箱", "Compatible with most network speakers");

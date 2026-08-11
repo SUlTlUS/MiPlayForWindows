@@ -15,10 +15,13 @@
     <FileVersion>0.2.4.0</FileVersion>
     <AssemblyVersion>0.2.4.0</AssemblyVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\MiPlay.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="Assets\MiPlay.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\MiPlayMark.png" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="..\DLNACast.Core\DLNACast.Core.csproj" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
   </ItemGroup>

@@ -15,6 +15,7 @@ public partial class App : Microsoft.UI.Xaml.Application
 {
     private TrayIconService? _trayIcon;
     private TrayMenuWindow? _trayMenu;
+    private QuickSpeakerWindow? _quickSpeakerWindow;
     private MainViewModel? _viewModel;
     private MainWindow? _mainWindow;
     private RendererDiscoveryService? _discovery;
@@ -60,11 +61,13 @@ public partial class App : Microsoft.UI.Xaml.Application
 
         _mainWindow = new MainWindow(_viewModel, this);
         StartupTrace.Write("OnLaunched: main window created");
+        _quickSpeakerWindow = new QuickSpeakerWindow(_viewModel, this);
+        StartupTrace.Write("OnLaunched: quick speaker window created");
         _trayMenu = new TrayMenuWindow(ShowMainWindow, _viewModel.StopCastingAsync, ExitApplicationAsync);
         StartupTrace.Write("OnLaunched: tray menu created");
         _trayIcon = new TrayIconService(
             WindowNative.GetWindowHandle(_mainWindow),
-            ShowMainWindow,
+            ShowQuickSpeakerWindow,
             ShowTrayMenu);
         StartupTrace.Write("OnLaunched: tray icon created");
         _mainWindow.Activate();
@@ -75,6 +78,8 @@ public partial class App : Microsoft.UI.Xaml.Application
         StartupTrace.Write($"Unhandled WinUI exception: {args.Message}", args.Exception);
 
     public void ShowMainWindow() => _mainWindow?.ShowAndActivate();
+
+    private void ShowQuickSpeakerWindow(int x, int y) => _quickSpeakerWindow?.ShowAt(x, y);
 
     private void ShowTrayMenu(int x, int y) => _trayMenu?.ShowAt(x, y);
 
@@ -92,6 +97,7 @@ public partial class App : Microsoft.UI.Xaml.Application
         {
             _trayIcon?.Dispose();
             _trayMenu?.Close();
+            _quickSpeakerWindow?.Close();
             _mainWindow?.Close();
             Exit();
         }

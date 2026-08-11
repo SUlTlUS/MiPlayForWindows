@@ -5,7 +5,8 @@ internal sealed record MiPlayLegacyRuntimeControlCommand(
     ushort AcknowledgementCommand,
     ushort Sequence,
     byte[] Payload,
-    byte[] CommandFrame);
+    byte[] CommandFrame,
+    bool WaitForAcknowledgement);
 
 /// <summary>
 /// Allocates one shared command sequence for all controls sent after
@@ -22,6 +23,20 @@ internal sealed class MiPlayLegacyRuntimeControlSequence(
             MiPlayProtocolConstants.HeartbeatCommand,
             MiPlayProtocolConstants.HeartbeatAcknowledgementCommand,
             []);
+
+    public MiPlayLegacyRuntimeControlCommand PreparePause() =>
+        Prepare(
+            MiPlayProtocolConstants.PauseCommand,
+            MiPlayProtocolConstants.PauseAcknowledgementCommand,
+            [],
+            waitForAcknowledgement: false);
+
+    public MiPlayLegacyRuntimeControlCommand PrepareResume() =>
+        Prepare(
+            MiPlayProtocolConstants.ResumeCommand,
+            MiPlayProtocolConstants.ResumeAcknowledgementCommand,
+            [],
+            waitForAcknowledgement: false);
 
     public MiPlayLegacyRuntimeControlCommand PrepareSetVolume(int volume)
     {
@@ -50,7 +65,8 @@ internal sealed class MiPlayLegacyRuntimeControlSequence(
     private MiPlayLegacyRuntimeControlCommand Prepare(
         ushort command,
         ushort acknowledgementCommand,
-        byte[] payload)
+        byte[] payload,
+        bool waitForAcknowledgement = true)
     {
         var sequence = nextSequence;
         nextSequence = unchecked((ushort)(nextSequence + 1));
@@ -59,6 +75,7 @@ internal sealed class MiPlayLegacyRuntimeControlSequence(
             acknowledgementCommand,
             sequence,
             payload,
-            MiPlayCommandFrameCodec.Encode(command, sequence, payload));
+            MiPlayCommandFrameCodec.Encode(command, sequence, payload),
+            waitForAcknowledgement);
     }
 }

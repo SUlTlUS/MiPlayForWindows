@@ -20,20 +20,27 @@ internal sealed class TrayIconService : IDisposable
     private const uint NifMessage = 0x00000001;
     private const uint NifIcon = 0x00000002;
     private const uint NifTip = 0x00000004;
+    private const uint ImageIcon = 1;
+    private const uint LrDefaultSize = 0x00000040;
+    private const uint LrLoadFromFile = 0x00000010;
     private const uint IdiApplication = 32512;
 
-    private readonly Action _showMainWindow;
+    private readonly Action<int, int> _showQuickSpeakerWindow;
     private readonly Action<int, int> _showMenu;
     private readonly WindowProcedure _windowProcedure;
     private readonly IntPtr _windowHandle;
     private readonly IntPtr _originalWindowProcedure;
+    private readonly IntPtr _loadedIconHandle;
     private NotifyIconData _iconData;
     private bool _disposed;
 
-    public TrayIconService(IntPtr windowHandle, Action showMainWindow, Action<int, int> showMenu)
+    public TrayIconService(
+        IntPtr windowHandle,
+        Action<int, int> showQuickSpeakerWindow,
+        Action<int, int> showMenu)
     {
         _windowHandle = windowHandle;
-        _showMainWindow = showMainWindow;
+        _showQuickSpeakerWindow = showQuickSpeakerWindow;
         _showMenu = showMenu;
         _windowProcedure = WindowProc;
         _originalWindowProcedure = GetWindowLongPtr(_windowHandle, GwlpWndProc);
@@ -45,6 +52,15 @@ internal sealed class TrayIconService : IDisposable
                 "Unable to register the system tray callback."));
         }
 
+        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "MiPlay.ico");
+        _loadedIconHandle = LoadImage(
+            IntPtr.Zero,
+            iconPath,
+            ImageIcon,
+            0,
+            0,
+            LrLoadFromFile | LrDefaultSize);
+
         _iconData = new NotifyIconData
         {
             Size = (uint)Marshal.SizeOf<NotifyIconData>(),
@@ -52,7 +68,9 @@ internal sealed class TrayIconService : IDisposable
             Id = 1,
             Flags = NifMessage | NifIcon | NifTip,
             CallbackMessage = WmAppTrayIcon,
-            IconHandle = LoadIcon(IntPtr.Zero, new IntPtr(IdiApplication)),
+            IconHandle = _loadedIconHandle != IntPtr.Zero
+                ? _loadedIconHandle
+                : LoadIcon(IntPtr.Zero, new IntPtr(IdiApplication)),
             Tip = "MiPlay Cast",
             Info = string.Empty,
             InfoTitle = string.Empty
@@ -60,6 +78,7 @@ internal sealed class TrayIconService : IDisposable
 
         if (!ShellNotifyIcon(NimAdd, ref _iconData))
         {
+            if (_loadedIconHandle != IntPtr.Zero) DestroyIcon(_loadedIconHandle);
             SetWindowLongPtr(_windowHandle, GwlpWndProc, _originalWindowProcedure);
             throw new InvalidOperationException(SystemLanguage.Select(
                 "无法在 Windows 通知区创建图标。",
@@ -74,7 +93,10 @@ internal sealed class TrayIconService : IDisposable
             var mouseMessage = unchecked((uint)lParam.ToInt64());
             if (mouseMessage is WmLButtonUp or WmLButtonDoubleClick)
             {
-                _showMainWindow();
+                if (GetCursorPos(out var cursor))
+                {
+                    _showQuickSpeakerWindow(cursor.X, cursor.Y);
+                }
                 return IntPtr.Zero;
             }
 
@@ -96,6 +118,7 @@ internal sealed class TrayIconService : IDisposable
         if (_disposed) return;
         _disposed = true;
         ShellNotifyIcon(NimDelete, ref _iconData);
+        if (_loadedIconHandle != IntPtr.Zero) DestroyIcon(_loadedIconHandle);
         if (_windowHandle != IntPtr.Zero && _originalWindowProcedure != IntPtr.Zero)
         {
             SetWindowLongPtr(_windowHandle, GwlpWndProc, _originalWindowProcedure);
@@ -138,6 +161,19 @@ internal sealed class TrayIconService : IDisposable
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "LoadIconW")]
     private static extern IntPtr LoadIcon(IntPtr instance, IntPtr iconName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "LoadImageW")]
+    private static extern IntPtr LoadImage(
+        IntPtr instance,
+        string name,
+        uint type,
+        int desiredWidth,
+        int desiredHeight,
+        uint loadFlags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyIcon(IntPtr icon);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern IntPtr GetWindowLongPtr(IntPtr windowHandle, int index);

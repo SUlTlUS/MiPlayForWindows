@@ -1,5 +1,6 @@
 using DLNACast.App.ViewModels;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -46,6 +47,8 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         var windowId = Win32Interop.GetWindowIdFromWindow(windowHandle);
         _appWindow = AppWindow.GetFromWindowId(windowId);
         _appWindow.Title = "MiPlay Cast";
+        var appIconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "MiPlay.ico");
+        if (File.Exists(appIconPath)) _appWindow.SetIcon(appIconPath);
         _appWindow.Resize(GetInitialWindowSize(windowHandle, windowId));
         _appWindow.Closing += OnClosing;
         Activated += OnActivated;

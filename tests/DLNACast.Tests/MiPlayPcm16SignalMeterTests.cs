@@ -43,4 +43,21 @@ public sealed class MiPlayPcm16SignalMeterTests
         Assert.Throws<ArgumentException>(() => meter.Add([]));
         Assert.Throws<ArgumentException>(() => meter.Add([1]));
     }
+
+    [Fact]
+    public void SnapshotAndResetReportsOnlyTheCurrentWindow()
+    {
+        var meter = new MiPlayPcm16SignalMeter();
+        meter.Add([0, 64]);
+
+        var audible = meter.SnapshotAndReset();
+        meter.Add([0, 0]);
+        var silent = meter.SnapshotAndReset();
+
+        Assert.True(audible.ContainsAudibleSignal);
+        Assert.Equal(1, audible.NonZeroSampleCount);
+        Assert.False(silent.ContainsAudibleSignal);
+        Assert.Equal(0, silent.NonZeroSampleCount);
+        Assert.Equal(1, silent.SampleCount);
+    }
 }

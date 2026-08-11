@@ -32,6 +32,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private readonly SemaphoreSlim _discoveryGate = new(1, 1);
     private readonly SemaphoreSlim _selectionGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly DispatcherQueueTimer _castDurationTimer;
+    private readonly Stopwatch _castDurationStopwatch = new();
     private readonly Lock _sessionGate = new();
     private readonly Dictionary<string, DlnaSessionHandle> _dlnaSessions = [];
     private readonly Dictionary<string, MiPlaySessionHandle> _miPlaySessions = [];
@@ -44,7 +46,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private bool _isPrivateNetwork;
     private string _networkSummary = SystemLanguage.Select("正在检查网络…", "Checking the network…");
     private string _statusText = SystemLanguage.Select("正在初始化…", "Initializing…");
-    private string _profileText = SystemLanguage.Select("未连接", "Not connected");
+    private string _profileText = "DLNA";
+    private string _castDurationText = "00:00";
     private string _diagnosticsText = string.Empty;
     private string _errorText = string.Empty;
     private AppSettings _settings = new();
@@ -76,6 +79,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _settingsStore = settingsStore;
         _logger = logger;
         _dispatcher = dispatcher;
+        _castDurationTimer = dispatcher.CreateTimer();
+        _castDurationTimer.Interval = TimeSpan.FromSeconds(1);
+        _castDurationTimer.IsRepeating = true;
+        _castDurationTimer.Tick += OnCastDurationTimerTick;
 
         RefreshRenderersCommand = new AsyncRelayCommand(RefreshRenderersAsync, () => !IsBusy);
         RefreshSourcesCommand = new RelayCommand(RefreshSources, () => !IsBusy);
@@ -132,6 +139,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             if (IsCasting) return;
             if (!SetField(ref _isMiPlayMode, value)) return;
             OnPropertyChanged(nameof(IsDlnaMode));
+            ProfileText = SelectedTransportProfileText;
             OnPropertyChanged(nameof(CanUseProcessCapture));
             OnPropertyChanged(nameof(CanUseStereoSplit));
         }
@@ -560,6 +568,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public string NetworkSummary { get => _networkSummary; private set => SetField(ref _networkSummary, value); }
     public string StatusText { get => _statusText; private set => SetField(ref _statusText, value); }
     public string ProfileText { get => _profileText; private set => SetField(ref _profileText, value); }
+    public string CastDurationText
+    {
+        get => _castDurationText;
+        private set => SetField(ref _castDurationText, value);
+    }
+    private string SelectedTransportProfileText => IsMiPlayMode
+        ? SystemLanguage.Select("小米妙播", "MiPlay")
+        : "DLNA";
     public string DiagnosticsText
     {
         get => _diagnosticsText;
@@ -1720,7 +1736,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private void NotifyCastStateChanged()
     {
+        UpdateCastDurationState(IsCasting);
         foreach (var renderer in Renderers) renderer.IsSelectionEnabled = !IsBusy;
+        if (!IsCasting) ProfileText = SelectedTransportProfileText;
         OnPropertyChanged(nameof(IsCasting));
         OnPropertyChanged(nameof(CastingStatusVisibility));
         OnPropertyChanged(nameof(InactiveStatusVisibility));
@@ -1729,6 +1747,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         OnPropertyChanged(nameof(CanUseSpeakerOnlyPlayback));
         OnPropertyChanged(nameof(CanUseStereoSplit));
         RefreshSourcesCommand.RaiseCanExecuteChanged();
+    }
+
+    private void UpdateCastDurationState(bool isCasting)
+    {
+        if (isCasting)
+        {
+            if (_castDurationStopwatch.IsRunning) return;
+            _castDurationStopwatch.Restart();
+            CastDurationText = "00:00";
+            _castDurationTimer.Start();
+            return;
+        }
+
+        if (!_castDurationStopwatch.IsRunning) return;
+        _castDurationTimer.Stop();
+        _castDurationStopwatch.Reset();
+        CastDurationText = "00:00";
+    }
+
+    private void OnCastDurationTimerTick(DispatcherQueueTimer sender, object args)
+    {
+        var elapsed = _castDurationStopwatch.Elapsed;
+        var totalHours = (long)elapsed.TotalHours;
+        CastDurationText = totalHours > 0
+            ? $"{totalHours:00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}"
+            : $"{elapsed.Minutes:00}:{elapsed.Seconds:00}";
     }
 
     private async Task SaveSpeakerOnlyPlaybackAsync(AppSettings settings)
@@ -1817,6 +1861,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _lifetime.Cancel();
+        _castDurationTimer.Stop();
+        _castDurationTimer.Tick -= OnCastDurationTimerTick;
         if (_periodicRefresh is not null)
         {
             try { await _periodicRefresh; }
