@@ -77,7 +77,12 @@ dotnet test tests/DLNACast.Tests/DLNACast.Tests.csproj -c Release -p:Platform=x6
 
 ## 生成 MSIX
 
-打包脚本会发布自包含的 x64 WinUI 3 应用，并使用开发证书签名：
+打包脚本会生成两个 x64 包，并使用同一张开发证书签名：
+
+- `with-dotnet`：包含 .NET 10 运行时，体积较大，适合直接安装。
+- `without-dotnet`：不包含 .NET，体积较小，电脑需要预先安装 x64 .NET 10 Desktop Runtime。
+
+两个包都包含 Windows App SDK，只需根据是否已经安装 .NET 选择其中一个：
 
 ```powershell
 $password = Read-Host '测试 PFX 密码' -AsSecureString
@@ -91,7 +96,7 @@ Import-Certificate `
   -FilePath .\artifacts\signing\DLNACast.Development.cer `
   -CertStoreLocation Cert:\LocalMachine\TrustedPeople
 
-Add-AppxPackage .\artifacts\DLNACast.Windows_0.2.4.0_x64.msix
+Add-AppxPackage .\artifacts\DLNACast.Windows_0.2.4.0_x64_with-dotnet.msix
 ```
 
 证书如果只导入“当前用户”，安装时可能出现 `0x800B0109` 或 `0x80073CF0`。MSIX 只为专用网络注册 TCP 49555–49565 入站规则，卸载应用后由 Windows 移除。
