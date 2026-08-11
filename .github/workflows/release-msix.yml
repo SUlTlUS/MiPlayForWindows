@@ -26,10 +26,14 @@ jobs:
         run: |
           [xml]$manifest = Get-Content -LiteralPath packaging\AppxManifest.xml -Raw
           $manifestVersion = [string]$manifest.Package.Identity.Version
-          $expectedTag = "v$($manifestVersion -replace '\.0$', '')"
-          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
-              throw "Tag $env:GITHUB_REF_NAME does not match package version $manifestVersion ($expectedTag)."
+          $releaseTag = "v$($manifestVersion -replace '\.0$', '')"
+          $escapedReleaseTag = [Regex]::Escape($releaseTag)
+          $isPrimaryTag = $env:GITHUB_REF_NAME -eq $releaseTag
+          $isAssetRetryTag = $env:GITHUB_REF_NAME -match "^${escapedReleaseTag}-assets\d+$"
+          if (-not $isPrimaryTag -and -not $isAssetRetryTag) {
+              throw "Tag $env:GITHUB_REF_NAME does not match package version $manifestVersion ($releaseTag)."
           }
+          "RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run tests
         shell: pwsh
@@ -134,11 +138,28 @@ jobs:
               (Resolve-Path artifacts\signing\DLNACast.Development.cer).Path
               (Resolve-Path artifacts\SHA256SUMS.txt).Path
           )
-          & gh release create $env:GITHUB_REF_NAME @assets `
-              --verify-tag `
-              --latest `
-              --title "MiPlay Cast $env:GITHUB_REF_NAME" `
-              --notes-file $notesPath
-          if ($LASTEXITCODE -ne 0) {
-              throw "gh release create failed with exit code $LASTEXITCODE."
+          & gh release view $env:RELEASE_TAG *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+          if ($releaseExists) {
+              & gh release edit $env:RELEASE_TAG `
+                  --latest `
+                  --title "MiPlay Cast $env:RELEASE_TAG" `
+                  --notes-file $notesPath
+              if ($LASTEXITCODE -ne 0) {
+                  throw "gh release edit failed with exit code $LASTEXITCODE."
+              }
+              & gh release upload $env:RELEASE_TAG @assets --clobber
+              if ($LASTEXITCODE -ne 0) {
+                  throw "gh release upload failed with exit code $LASTEXITCODE."
+              }
+          }
+          else {
+              & gh release create $env:RELEASE_TAG @assets `
+                  --verify-tag `
+                  --latest `
+                  --title "MiPlay Cast $env:RELEASE_TAG" `
+                  --notes-file $notesPath
+              if ($LASTEXITCODE -ne 0) {
+                  throw "gh release create failed with exit code $LASTEXITCODE."
+              }
           }
