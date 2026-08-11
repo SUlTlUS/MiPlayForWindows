@@ -1,0 +1,144 @@
+name: Release MSIX
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          [xml]$manifest = Get-Content -LiteralPath packaging\AppxManifest.xml -Raw
+          $manifestVersion = [string]$manifest.Package.Identity.Version
+          $expectedTag = "v$($manifestVersion -replace '\.0$', '')"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+              throw "Tag $env:GITHUB_REF_NAME does not match package version $manifestVersion ($expectedTag)."
+          }
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          dotnet restore DLNACast.slnx
+          dotnet test tests\DLNACast.Tests\DLNACast.Tests.csproj -c Release -p:Platform=x64 --no-restore
+
+      - name: Build and sign both MSIX packages
+        shell: pwsh
+        run: |
+          $pfxPassword = ConvertTo-SecureString `
+              (([Guid]::NewGuid().ToString('N')) + '!Aa9') `
+              -AsPlainText `
+              -Force
+          .\scripts\package-msix.ps1 -RuntimeMode Both -ExportPassword $pfxPassword
+
+      - name: Verify release assets
+        shell: pwsh
+        run: |
+          [xml]$manifest = Get-Content -LiteralPath packaging\AppxManifest.xml -Raw
+          $version = [string]$manifest.Package.Identity.Version
+          $withDotNet = Get-Item "artifacts\DLNACast.Windows_${version}_x64_with-dotnet.msix"
+          $withoutDotNet = Get-Item "artifacts\DLNACast.Windows_${version}_x64_without-dotnet.msix"
+          $certificatePath = Resolve-Path artifacts\signing\DLNACast.Development.cer
+
+          if ($withDotNet.Length -le $withoutDotNet.Length) {
+              throw 'The self-contained package should be larger than the framework-dependent package.'
+          }
+          if (-not (Test-Path artifacts\msix-stage-with-dotnet\coreclr.dll) -or
+              -not (Test-Path artifacts\msix-stage-with-dotnet\hostfxr.dll)) {
+              throw 'The with-dotnet package does not contain the expected .NET runtime files.'
+          }
+          if ((Test-Path artifacts\msix-stage-without-dotnet\coreclr.dll) -or
+              (Test-Path artifacts\msix-stage-without-dotnet\hostfxr.dll)) {
+              throw 'The without-dotnet package unexpectedly contains the .NET runtime.'
+          }
+
+          $runtimeConfig = Get-Content `
+              -LiteralPath artifacts\msix-stage-without-dotnet\DLNACast.App.runtimeconfig.json `
+              -Raw | ConvertFrom-Json
+          $frameworks = @($runtimeConfig.runtimeOptions.frameworks.name)
+          if ('Microsoft.NETCore.App' -notin $frameworks -or
+              'Microsoft.WindowsDesktop.App' -notin $frameworks) {
+              throw 'The without-dotnet package does not declare the expected .NET Desktop Runtime.'
+          }
+
+          $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($certificatePath)
+          foreach ($package in @($withDotNet, $withoutDotNet)) {
+              $signature = Get-AuthenticodeSignature -LiteralPath $package.FullName
+              if ($null -eq $signature.SignerCertificate -or
+                  $signature.SignerCertificate.Thumbprint -ne $certificate.Thumbprint) {
+                  throw "Signature verification failed for $($package.Name)."
+              }
+          }
+
+          $assets = @($withDotNet.FullName, $withoutDotNet.FullName, $certificatePath.Path)
+          $checksums = foreach ($asset in $assets) {
+              $hash = Get-FileHash -LiteralPath $asset -Algorithm SHA256
+              '{0}  {1}' -f $hash.Hash.ToLowerInvariant(), [IO.Path]::GetFileName($asset)
+          }
+          [IO.File]::WriteAllLines(
+              (Join-Path (Resolve-Path artifacts) 'SHA256SUMS.txt'),
+              $checksums,
+              [Text.UTF8Encoding]::new($false))
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [xml]$manifest = Get-Content -LiteralPath packaging\AppxManifest.xml -Raw
+          $version = [string]$manifest.Package.Identity.Version
+          $notesPath = Join-Path (Resolve-Path artifacts) 'RELEASE_NOTES.md'
+          $notes = @'
+          首个公开测试版本。
+
+          ### 下载
+
+          - **with-dotnet**：推荐下载，已包含 .NET 10。
+          - **without-dotnet**：轻量版，需要预先安装 x64 .NET 10 Desktop Runtime。
+          - **DLNACast.Development.cer**：开发签名证书，安装 MSIX 前需导入本地计算机的“受信任的人”。
+          - **SHA256SUMS.txt**：发布文件校验值。
+
+          两个 MSIX 都包含 Windows App SDK，请二选一安装，不能同时安装。
+
+          ### 主要功能
+
+          - 投送 Windows 系统音频或单个应用及其子进程。
+          - 支持 DLNA 和实验性小米妙播（MiPlay）。
+          - 支持双音箱模式、远端音量、投送诊断和托盘快捷选择。
+          - “仅音箱播放”需要另行安装仓库内的测试签名虚拟音频驱动。
+
+          ### 说明
+
+          MiPlay 单音箱主路径已在小米音箱 LX06 1.94.13 上验证可听；其他型号、单应用 MiPlay 和双音箱同步仍属于实验功能。电脑和音箱需要在同一专用网络内。MiPlay 还需要带 `aac_mf` 编码器的 FFmpeg。
+          '@
+          [IO.File]::WriteAllText($notesPath, $notes, [Text.UTF8Encoding]::new($false))
+
+          $assets = @(
+              (Resolve-Path "artifacts\DLNACast.Windows_${version}_x64_with-dotnet.msix").Path
+              (Resolve-Path "artifacts\DLNACast.Windows_${version}_x64_without-dotnet.msix").Path
+              (Resolve-Path artifacts\signing\DLNACast.Development.cer).Path
+              (Resolve-Path artifacts\SHA256SUMS.txt).Path
+          )
+          & gh release create $env:GITHUB_REF_NAME @assets `
+              --verify-tag `
+              --latest `
+              --title "MiPlay Cast $env:GITHUB_REF_NAME" `
+              --notes-file $notesPath
+          if ($LASTEXITCODE -ne 0) {
+              throw "gh release create failed with exit code $LASTEXITCODE."
+          }
