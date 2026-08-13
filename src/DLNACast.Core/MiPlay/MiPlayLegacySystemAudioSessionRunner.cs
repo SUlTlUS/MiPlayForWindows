@@ -107,7 +107,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         ResetReceiverVolume();
         await ResetCaptureSelectionAsync(request.Selection, cancellationToken).ConfigureAwait(false);
         var sharedAudioSession = request.SharedAudioSession;
-        var sharedSubscription = sharedAudioSession?.Subscribe();
+        var sharedSubscription = sharedAudioSession?.Subscribe(request.ChannelRoute);
         await using var sharedSubscriptionLease = sharedSubscription;
         await using var sharedCaptureRegistration = sharedAudioSession is null
             ? null
@@ -265,7 +265,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             ? null
             : new ActiveCaptureRegistration(this, localCapture);
         await pcmBuffer.PrepareForPlaybackAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        var ownsEncoder = sharedSubscription is null || sharedSubscription.IsMediaLeader;
+        var ownsEncoder = sharedSubscription is null || sharedSubscription.IsAccessUnitLeader;
         await using var encoder = ownsEncoder
             ? MiPlayFfmpegAacEncoder.Start(
                 request.FfmpegPath,
@@ -499,6 +499,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             initialProgramClockReference90Khz: MiPlayWfdMediaClock.CreateInitialProgramClockReference90Khz(
                 timeOffset,
                 MiPlayProtocolConstants.OtherNetworkPlaybackDelayMicroseconds));
+        using var mediaPacingClock = MiPlayMediaPacingClock.Create();
         var mediaStartedAt = sharedMediaStartedAt ?? Stopwatch.GetTimestamp();
         long totalBytes = 0;
         long totalRtpFrames = 0;
@@ -525,7 +526,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                 else
                 {
                     byte[]? leaderAccessUnit = null;
-                    if (sharedSubscription.IsMediaLeader)
+                    if (sharedSubscription.IsAccessUnitLeader)
                     {
                         leaderAccessUnit = await encoder!.ReadAccessUnitAsync(cancellationToken)
                             .ConfigureAwait(false) ??
@@ -600,6 +601,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                 var nextSend = mediaStartedAt + checked((long)Math.Round(
                     nextDueMilliseconds * Stopwatch.Frequency / 1_000d));
                 var remaining = nextSend - Stopwatch.GetTimestamp();
+                var pacingDeadline = nextSend;
                 if (accessUnitsSent >= MiPlayWfdStartupPacingPlan.CapturedAccessUnitCount && remaining <= 0)
                 {
                     lateMediaSends++;
@@ -617,6 +619,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                     remaining = MiPlayMediaStallRecoveryPlan.PreserveNominalGap(
                         remaining,
                         Stopwatch.Frequency);
+                    pacingDeadline = Stopwatch.GetTimestamp() + remaining;
                 }
 
                 if (accessUnitIndex % 25 == 0)
@@ -673,9 +676,10 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                 accessUnitIndex = accessUnitsSent;
                 if (remaining > 0)
                 {
-                    await Task.Delay(
-                        TimeSpan.FromSeconds(remaining / (double)Stopwatch.Frequency),
-                        cancellationToken).ConfigureAwait(false);
+                    await mediaPacingClock.WaitUntilAsync(
+                            pacingDeadline,
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
             }
         }

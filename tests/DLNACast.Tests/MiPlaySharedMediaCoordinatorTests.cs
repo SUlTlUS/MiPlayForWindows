@@ -5,6 +5,30 @@ namespace DLNACast.Tests;
 public sealed class MiPlaySharedMediaCoordinatorTests
 {
     [Fact]
+    public async Task ThreeReceiversShareOneTimeOffsetStartClockAndAccessUnit()
+    {
+        var coordinator = new MiPlaySharedMediaCoordinator(participantCount: 3);
+        var timeOffsets = await Task.WhenAll(
+            coordinator.SynchronizeTimeOffsetAsync(1, 58_878_859_700, CancellationToken.None),
+            coordinator.SynchronizeTimeOffsetAsync(2, 58_878_859_721, CancellationToken.None),
+            coordinator.SynchronizeTimeOffsetAsync(3, 58_878_859_710, CancellationToken.None));
+        Assert.All(timeOffsets, value => Assert.Equal(58_878_859_721UL, value));
+
+        var mediaStarts = await Task.WhenAll(
+            coordinator.SynchronizeMediaAsync(1, timeOffsets[0], CancellationToken.None),
+            coordinator.SynchronizeMediaAsync(2, timeOffsets[1], CancellationToken.None),
+            coordinator.SynchronizeMediaAsync(3, timeOffsets[2], CancellationToken.None));
+        Assert.All(mediaStarts, value => Assert.Equal(mediaStarts[0], value));
+
+        var accessUnit = new byte[] { 0xff, 0xf9, 0x50, 0x80 };
+        var synchronized = await Task.WhenAll(
+            coordinator.SynchronizeAccessUnitAsync(1, 0, accessUnit, CancellationToken.None),
+            coordinator.SynchronizeAccessUnitAsync(2, 0, null, CancellationToken.None),
+            coordinator.SynchronizeAccessUnitAsync(3, 0, null, CancellationToken.None));
+        Assert.All(synchronized, value => Assert.Same(accessUnit, value));
+    }
+
+    [Fact]
     public async Task PairUsesOneTimeOffsetOneStartClockAndOneAacStream()
     {
         var coordinator = new MiPlaySharedMediaCoordinator(participantCount: 2);

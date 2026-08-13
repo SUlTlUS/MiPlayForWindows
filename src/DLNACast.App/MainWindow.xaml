@@ -456,7 +456,13 @@
                                     </StackPanel>
                                 </Border>
 
-                                <StackPanel Spacing="8">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Column="0" Spacing="8">
                                     <TextBlock Text="{Binding LeftChannelText}"
                                                FontWeight="SemiBold"
                                                AutomationProperties.HeadingLevel="Level3" />
@@ -496,7 +502,7 @@
                                     </ItemsControl>
                                 </StackPanel>
 
-                                <StackPanel Spacing="8">
+                                <StackPanel Grid.Column="1" Spacing="8">
                                     <TextBlock Text="{Binding RightChannelText}"
                                                FontWeight="SemiBold"
                                                AutomationProperties.HeadingLevel="Level3" />
@@ -535,6 +541,7 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </StackPanel>
+                                </Grid>
                                     </StackPanel>
                                 </StackPanel>
                             </ScrollViewer>

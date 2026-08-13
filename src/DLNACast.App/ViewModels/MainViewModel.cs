@@ -157,19 +157,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool CanUseStereoSplit => !IsBusy;
     public Visibility AudioSourceSelectorVisibility =>
         IsProcessMode ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility NormalRendererListVisibility => IsStereoSplitMode ? Visibility.Collapsed : Visibility.Visible;
-    public Visibility StereoRendererListsVisibility => IsStereoSplitMode ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility NormalRendererListVisibility => IsStereoSplitMode
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+    public Visibility StereoRendererListsVisibility => IsStereoSplitMode
+        ? Visibility.Visible
+        : Visibility.Collapsed;
     public string LeftChannelText => SystemLanguage.Select("左声道", "Left channel");
     public string RightChannelText => SystemLanguage.Select("右声道", "Right channel");
     public string StereoMasterVolumeText => $"{StereoMasterVolume:F0}%";
     public string StereoMasterVolumeLabel => SystemLanguage.Select("总音量", "Master volume");
     public string StereoMasterVolumeAutomationName => SystemLanguage.Select(
-        "双音箱立体声总音量",
-        "Two-speaker stereo master volume");
+        "立体声总音量",
+        "Stereo master volume");
     public bool CanAdjustStereoMasterVolume =>
         IsStereoSplitMode &&
-        Renderers.FirstOrDefault(renderer => renderer.IsLeftChannel)?.CanControlVolume == true &&
-        Renderers.FirstOrDefault(renderer => renderer.IsRightChannel)?.CanControlVolume == true;
+        Renderers.Any(renderer => renderer.IsLeftChannel) &&
+        Renderers.Any(renderer => renderer.IsRightChannel) &&
+        Renderers
+            .Where(renderer => renderer.IsLeftChannel || renderer.IsRightChannel)
+            .All(renderer => renderer.CanControlVolume);
 
     public double StereoMasterVolume
     {
@@ -183,16 +190,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 return;
             }
 
-            var left = Renderers.First(renderer => renderer.IsLeftChannel);
-            var right = Renderers.First(renderer => renderer.IsRightChannel);
-            var (Left, Right) = StereoVolumeScaler.ScaleToMaster(left.Volume, right.Volume, requested);
+            var assigned = Renderers
+                .Where(renderer => renderer.IsLeftChannel || renderer.IsRightChannel)
+                .ToArray();
+            var currentMaster = assigned.Max(renderer => renderer.Volume);
+            var scale = currentMaster <= double.Epsilon ? 0 : requested / currentMaster;
 
             _updatingStereoMasterVolume = true;
             try
             {
                 SetStereoMasterVolume(requested);
-                left.Volume = Left;
-                right.Volume = Right;
+                foreach (var renderer in assigned)
+                {
+                    renderer.Volume = currentMaster <= double.Epsilon
+                        ? requested
+                        : Math.Clamp(renderer.Volume * scale, 0, 100);
+                }
             }
             finally
             {
@@ -616,25 +629,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             if (IsStereoSplitMode)
             {
-                var left = Renderers.FirstOrDefault(renderer => renderer.IsLeftChannel);
-                var right = Renderers.FirstOrDefault(renderer => renderer.IsRightChannel);
-                if (left is not null && right is not null)
+                var leftCount = Renderers.Count(renderer => renderer.IsLeftChannel);
+                var rightCount = Renderers.Count(renderer => renderer.IsRightChannel);
+                if (leftCount == 0)
                 {
                     return SystemLanguage.Select(
-                        $"左：{left.FriendlyName} · 右：{right.FriendlyName}",
-                        $"Left: {left.FriendlyName} · Right: {right.FriendlyName}");
+                        "请为左声道选择至少一台音箱",
+                        "Select at least one speaker for the left channel");
                 }
-                if (left is not null)
+                if (rightCount == 0)
                 {
-                    return SystemLanguage.Select("请选择右声道音箱", "Choose the right-channel speaker");
-                }
-                if (right is not null)
-                {
-                    return SystemLanguage.Select("请选择左声道音箱", "Choose the left-channel speaker");
+                    return SystemLanguage.Select(
+                        "请为右声道选择至少一台音箱",
+                        "Select at least one speaker for the right channel");
                 }
                 return SystemLanguage.Select(
-                    "分别为左、右声道指定一台音箱",
-                    "Assign one speaker to each of the left and right channels");
+                    $"左声道 {leftCount} 台 · 右声道 {rightCount} 台",
+                    $"Left {leftCount} · Right {rightCount}");
             }
 
             return SelectedRendererCount == 0
@@ -717,8 +728,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 .Where(renderer => renderer.IsSelected)
                 .Select(renderer => renderer.Udn)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var leftChannelUdn = Renderers.FirstOrDefault(renderer => renderer.IsLeftChannel)?.Udn;
-            var rightChannelUdn = Renderers.FirstOrDefault(renderer => renderer.IsRightChannel)?.Udn;
+            var leftUdns = Renderers
+                .Where(renderer => renderer.IsLeftChannel)
+                .Select(renderer => renderer.Udn)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var rightUdns = Renderers
+                .Where(renderer => renderer.IsRightChannel)
+                .Select(renderer => renderer.Udn)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var devices = await _discovery.SearchAsync(_lifetime.Token);
             RendererItemViewModel[] items = [];
             await RunOnUiAsync(() =>
@@ -736,8 +753,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     var item = new RendererItemViewModel(device, _controller, _logger, _lifetime.Token)
                     {
                         IsSelected = !IsStereoSplitMode && selectedUdns.Contains(device.Udn),
-                        IsLeftChannel = IsStereoSplitMode && string.Equals(device.Udn, leftChannelUdn, StringComparison.OrdinalIgnoreCase),
-                        IsRightChannel = IsStereoSplitMode && string.Equals(device.Udn, rightChannelUdn, StringComparison.OrdinalIgnoreCase),
+                        IsLeftChannel = IsStereoSplitMode && leftUdns.Contains(device.Udn),
+                        IsRightChannel = IsStereoSplitMode && rightUdns.Contains(device.Udn),
                         IsStereoMode = IsStereoSplitMode,
                     };
                     item.SelectionChanged += OnRendererSelectionChanged;
@@ -805,7 +822,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
-    private async Task ApplyStereoPairAsync(int revision)
+    private async Task ApplyStereoGroupAsync(int revision)
     {
         try
         {
@@ -826,13 +843,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 await StopActiveSessionsPreservingAssignmentsAsync();
             }
 
-            var left = Renderers.FirstOrDefault(renderer => renderer.IsLeftChannel);
-            var right = Renderers.FirstOrDefault(renderer => renderer.IsRightChannel);
-            if (left is null || right is null)
+            var leftRenderers = Renderers.Where(renderer => renderer.IsLeftChannel).ToArray();
+            var rightRenderers = Renderers.Where(renderer => renderer.IsRightChannel).ToArray();
+            if (leftRenderers.Length == 0 || rightRenderers.Length == 0)
             {
                 StatusText = SystemLanguage.Select(
-                    "等待指定左右声道音箱",
-                    "Waiting for left and right speakers");
+                    "左、右声道都需要选择至少一台音箱",
+                    "Select at least one speaker for both the left and right channels");
+                return;
+            }
+
+            var targets = leftRenderers
+                .Select(renderer => new StereoTarget(renderer, AudioChannelRoute.LeftAsMono))
+                .Concat(rightRenderers.Select(renderer =>
+                    new StereoTarget(renderer, AudioChannelRoute.RightAsMono)))
+                .ToArray();
+            if (targets.Length > 63)
+            {
+                ErrorText = SystemLanguage.Select(
+                    "左右声道合计最多支持 63 台音箱。",
+                    "The left and right channel groups support up to 63 speakers in total.");
                 return;
             }
 
@@ -854,22 +884,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             IsBusy = true;
             ErrorText = string.Empty;
-            StatusText = IsMiPlayMode
-                ? SystemLanguage.Select("正在启动双音箱同步播放…", "Starting synchronized dual-speaker playback…")
-                : SystemLanguage.Select("正在启动左右声道投送…", "Starting left/right channel casting…");
+            StatusText = SystemLanguage.Select(
+                $"正在启动左声道 {leftRenderers.Length} 台、右声道 {rightRenderers.Length} 台音箱…",
+                $"Starting {leftRenderers.Length} left-channel and {rightRenderers.Length} right-channel speakers…");
             CaptureSelection selection = IsProcessMode
                 ? new CaptureSelection.Process(SelectedSource.ProcessId!.Value, SelectedSource.DisplayName, true)
                 : new CaptureSelection.SystemMix(SelectedSource.Id, SelectedSource.DisplayName);
             StartResult[] results;
             if (IsMiPlayMode)
             {
-                results = await StartMiPlayPairAsync(left, right, selection);
+                results = await StartMiPlayGroupAsync(targets, selection);
             }
             else
             {
-                results = await Task.WhenAll(
-                    StartDlnaTargetAsync(left, selection, AudioChannelRoute.LeftAsMono),
-                    StartDlnaTargetAsync(right, selection, AudioChannelRoute.RightAsMono));
+                results = await Task.WhenAll(targets.Select(target =>
+                    StartDlnaTargetAsync(target.Renderer, selection, target.ChannelRoute)));
             }
             var failures = results.Where(result => result.Error is not null).ToArray();
             if (failures.Length > 0)
@@ -880,22 +909,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             _settings = _settings with
             {
-                LastRendererUdn = left.Udn,
+                LastRendererUdn = targets[0].Renderer.Udn,
                 CaptureMode = IsProcessMode ? "Process" : "SystemMix",
                 LastSourceId = SelectedSource.Id,
                 TransportMode = IsMiPlayMode ? "MiPlay" : "DLNA"
             };
             await _settingsStore.SaveAsync(_settings, _lifetime.Token);
             StatusText = SystemLanguage.Select(
-                $"左 {left.FriendlyName} · 右 {right.FriendlyName}",
-                $"L {left.FriendlyName} · R {right.FriendlyName}");
-            _logger.Info(IsMiPlayMode
-                ? SystemLanguage.Select(
-                    $"已开始双音箱同步播放：{left.FriendlyName}，{right.FriendlyName}",
-                    $"Started synchronized dual-speaker playback: {left.FriendlyName}, {right.FriendlyName}")
-                : SystemLanguage.Select(
-                    $"已开始左右声道投送：左 {left.FriendlyName}，右 {right.FriendlyName}",
-                    $"Started left/right casting: left {left.FriendlyName}, right {right.FriendlyName}"));
+                $"立体声播放：左 {leftRenderers.Length} 台 · 右 {rightRenderers.Length} 台",
+                $"Stereo playback: left {leftRenderers.Length} · right {rightRenderers.Length}");
+            _logger.Info(SystemLanguage.Select(
+                $"已开始多音箱立体声播放：左声道 {string.Join("、", leftRenderers.Select(renderer => renderer.FriendlyName))}；右声道 {string.Join("、", rightRenderers.Select(renderer => renderer.FriendlyName))}",
+                $"Started multi-speaker stereo playback: left {string.Join(", ", leftRenderers.Select(renderer => renderer.FriendlyName))}; right {string.Join(", ", rightRenderers.Select(renderer => renderer.FriendlyName))}"));
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -905,10 +930,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             ErrorText = exception is AggregateException aggregate
                 ? string.Join(Environment.NewLine, aggregate.InnerExceptions.Select(error => error.Message))
                 : exception.Message;
-            StatusText = SystemLanguage.Select("左右声道投送启动失败", "Failed to start left/right casting");
+            StatusText = SystemLanguage.Select("立体声播放启动失败", "Failed to start stereo playback");
             _logger.Error(SystemLanguage.Select(
-                "左右声道投送启动失败",
-                "Failed to start left/right casting"), exception);
+                "立体声播放启动失败",
+                "Failed to start stereo playback"), exception);
         }
         finally
         {
@@ -918,61 +943,53 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
-    private async Task<StartResult[]> StartMiPlayPairAsync(
-        RendererItemViewModel first,
-        RendererItemViewModel second,
+    private async Task<StartResult[]> StartMiPlayGroupAsync(
+        IReadOnlyList<StereoTarget> targets,
         CaptureSelection originalSelection)
     {
-        ILocalOutputLease? firstLocalOutputLease = null;
-        ILocalOutputLease? secondLocalOutputLease = null;
+        var localOutputLeases = new ILocalOutputLease?[targets.Count];
         MiPlaySharedAudioSession? sharedCapture = null;
         try
         {
             var captureSelection = originalSelection;
             if (IsSpeakerOnlyPlayback)
             {
-                firstLocalOutputLease = await _localOutputs.RouteForCastAsync(
-                    originalSelection,
-                    _lifetime.Token);
-                secondLocalOutputLease = await _localOutputs.RouteForCastAsync(
-                    originalSelection,
-                    _lifetime.Token);
-                if (!Equals(
-                        firstLocalOutputLease.CaptureSelection,
-                        secondLocalOutputLease.CaptureSelection))
+                for (var index = 0; index < targets.Count; index++)
+                {
+                    localOutputLeases[index] = await _localOutputs.RouteForCastAsync(
+                        originalSelection,
+                        _lifetime.Token);
+                }
+                captureSelection = localOutputLeases[0]!.CaptureSelection;
+                if (localOutputLeases.Any(lease =>
+                        lease is null || !Equals(lease.CaptureSelection, captureSelection)))
                 {
                     throw new InvalidOperationException(
-                        "A MiPlay pair must capture one common routed output.");
+                        "A MiPlay stereo group must capture one common routed output.");
                 }
-                captureSelection = firstLocalOutputLease.CaptureSelection;
             }
 
             sharedCapture = await MiPlaySharedAudioSession.StartAsync(
                 _audioCatalog,
                 captureSelection,
-                participantCount: 2,
+                targets.Select(target => target.ChannelRoute).ToArray(),
                 _lifetime.Token);
 
-            var firstTask = StartMiPlayTargetAsync(
-                first,
-                captureSelection,
-                AudioChannelRoute.Stereo,
-                sharedAudioSession: sharedCapture,
-                preAcquiredLocalOutputLease: firstLocalOutputLease,
-                originalSelection: originalSelection,
-                waitUntilReady: true);
-            var secondTask = StartMiPlayTargetAsync(
-                second,
-                captureSelection,
-                AudioChannelRoute.Stereo,
-                sharedAudioSession: sharedCapture,
-                preAcquiredLocalOutputLease: secondLocalOutputLease,
-                originalSelection: originalSelection,
-                waitUntilReady: true);
-            firstLocalOutputLease = null;
-            secondLocalOutputLease = null;
+            var startTasks = new Task<StartResult>[targets.Count];
+            for (var index = 0; index < targets.Count; index++)
+            {
+                startTasks[index] = StartMiPlayTargetAsync(
+                    targets[index].Renderer,
+                    captureSelection,
+                    targets[index].ChannelRoute,
+                    sharedAudioSession: sharedCapture,
+                    preAcquiredLocalOutputLease: localOutputLeases[index],
+                    originalSelection: originalSelection,
+                    waitUntilReady: true);
+                localOutputLeases[index] = null;
+            }
 
-            var results = await Task.WhenAll(firstTask, secondTask);
+            var results = await Task.WhenAll(startTasks);
             if (results.Any(result => result.Error is not null))
             {
                 await sharedCapture.DisposeAsync();
@@ -985,13 +1002,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             {
                 await sharedCapture.DisposeAsync();
             }
-            if (firstLocalOutputLease is not null)
+            foreach (var localOutputLease in localOutputLeases)
             {
-                await firstLocalOutputLease.DisposeAsync();
-            }
-            if (secondLocalOutputLease is not null)
-            {
-                await secondLocalOutputLease.DisposeAsync();
+                if (localOutputLease is not null)
+                {
+                    await localOutputLease.DisposeAsync();
+                }
             }
             throw;
         }
@@ -1158,35 +1174,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private void OnRendererSelectionChanged(object? sender, EventArgs eventArgs)
     {
-        if (_suppressSelectionEvents || IsStereoSplitMode || sender is not RendererItemViewModel renderer) return;
+        if (_suppressSelectionEvents || sender is not RendererItemViewModel renderer) return;
+        if (IsStereoSplitMode) return;
         NotifyRendererSelectionChanged();
         _ = ApplyRendererSelectionAsync(renderer);
     }
 
     private void OnRendererChannelAssignmentChanged(object? sender, EventArgs eventArgs)
     {
-        if (_suppressSelectionEvents || !IsStereoSplitMode || sender is not RendererItemViewModel renderer) return;
+        if (_suppressSelectionEvents ||
+            !IsStereoSplitMode ||
+            sender is not RendererItemViewModel renderer)
+        {
+            return;
+        }
 
         _suppressSelectionEvents = true;
         try
         {
             renderer.IsSelected = false;
-            if (renderer.IsLeftChannel)
-            {
-                renderer.IsRightChannel = false;
-                foreach (var other in Renderers.Where(item => !ReferenceEquals(item, renderer)))
-                {
-                    other.IsLeftChannel = false;
-                }
-            }
-            else if (renderer.IsRightChannel)
-            {
-                renderer.IsLeftChannel = false;
-                foreach (var other in Renderers.Where(item => !ReferenceEquals(item, renderer)))
-                {
-                    other.IsRightChannel = false;
-                }
-            }
         }
         finally
         {
@@ -1195,13 +1201,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         NotifyRendererSelectionChanged();
         var revision = Interlocked.Increment(ref _stereoSelectionRevision);
-        _ = ApplyStereoPairAsync(revision);
+        _ = ApplyStereoGroupAsync(revision);
     }
 
     private void OnRendererVolumeChanged(object? sender, EventArgs eventArgs)
     {
         if (_updatingStereoMasterVolume || !IsStereoSplitMode) return;
-        UpdateStereoMasterVolumeFromChannels();
+        UpdateStereoMasterVolumeFromSelection();
     }
 
     private void NotifyRendererSelectionChanged()
@@ -1210,15 +1216,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         OnPropertyChanged(nameof(SelectedRendererCount));
         OnPropertyChanged(nameof(RendererSelectionText));
         OnPropertyChanged(nameof(CanAdjustStereoMasterVolume));
-        UpdateStereoMasterVolumeFromChannels();
+        UpdateStereoMasterVolumeFromSelection();
     }
 
-    private void UpdateStereoMasterVolumeFromChannels()
+    private void UpdateStereoMasterVolumeFromSelection()
     {
-        var left = Renderers.FirstOrDefault(renderer => renderer.IsLeftChannel && renderer.CanControlVolume);
-        var right = Renderers.FirstOrDefault(renderer => renderer.IsRightChannel && renderer.CanControlVolume);
-        if (left is null || right is null) return;
-        SetStereoMasterVolume(StereoVolumeScaler.GetMasterVolume(left.Volume, right.Volume));
+        var selected = Renderers
+            .Where(renderer =>
+                (renderer.IsLeftChannel || renderer.IsRightChannel) &&
+                renderer.CanControlVolume)
+            .ToArray();
+        if (selected.Length == 0) return;
+        SetStereoMasterVolume(selected.Max(renderer => renderer.Volume));
     }
 
     private void SetStereoMasterVolume(double value)
@@ -1322,7 +1331,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         await RunOnUiAsync(() =>
         {
             foreach (var (Renderer, Volume) in results) Renderer.SetInitialVolume(Volume);
-            UpdateStereoMasterVolumeFromChannels();
+            UpdateStereoMasterVolumeFromSelection();
         });
     }
 
@@ -1560,14 +1569,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         if (IsStereoSplitMode)
         {
-            var left = Renderers.FirstOrDefault(renderer => renderer.IsLeftChannel);
-            var right = Renderers.FirstOrDefault(renderer => renderer.IsRightChannel);
-            if (left is not null && right is not null)
-            {
-                return SystemLanguage.Select(
-                    $"左 {left.FriendlyName} · 右 {right.FriendlyName}",
-                    $"L {left.FriendlyName} · R {right.FriendlyName}");
-            }
+            var leftCount = Renderers.Count(renderer => renderer.IsLeftChannel && HasSession(renderer.Udn));
+            var rightCount = Renderers.Count(renderer => renderer.IsRightChannel && HasSession(renderer.Udn));
+            return SystemLanguage.Select(
+                $"立体声播放：左 {leftCount} 台 · 右 {rightCount} 台",
+                $"Stereo playback: left {leftCount} · right {rightCount}");
         }
 
         return SystemLanguage.Select(
@@ -1901,6 +1907,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     }
 
     private sealed record StartResult(string Udn, string RendererName, Exception? Error);
+
+    private sealed record StereoTarget(
+        RendererItemViewModel Renderer,
+        AudioChannelRoute ChannelRoute);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

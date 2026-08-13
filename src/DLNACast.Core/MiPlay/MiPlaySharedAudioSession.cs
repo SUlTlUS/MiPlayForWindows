@@ -5,15 +5,16 @@ using DLNACast.Core.Models;
 namespace DLNACast.Core.MiPlay;
 
 /// <summary>
-/// Owns one Windows loopback capture for a multi-receiver MiPlay pair and
-/// coordinates the common TIME_OFFSET, AAC data, and RTP media timeline used
-/// by the rooted-phone pair flow.
+/// Owns one Windows loopback capture for a multi-receiver MiPlay group. All
+/// receivers share TIME_OFFSET and the RTP media start, while receivers on the
+/// same channel route share one encoded AAC stream.
 /// </summary>
 public sealed class MiPlaySharedAudioSession : IAsyncDisposable
 {
     private readonly Lock gate = new();
     private readonly int participantCount;
     private readonly MiPlaySharedMediaCoordinator mediaCoordinator;
+    private readonly MiPlaySharedAccessUnitCoordinator accessUnitCoordinator;
     private readonly CancellationTokenSource lifetime = new();
     private readonly Dictionary<int, PcmFrameBuffer> subscribers = [];
     private readonly TaskCompletionSource openReady =
@@ -26,11 +27,13 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
 
     private MiPlaySharedAudioSession(
         int participantCount,
+        IReadOnlyDictionary<AudioChannelRoute, int> routeParticipantCounts,
         PcmFrameBuffer sourceBuffer,
         SwitchableAudioCaptureSource capture)
     {
         this.participantCount = participantCount;
         mediaCoordinator = new MiPlaySharedMediaCoordinator(participantCount);
+        accessUnitCoordinator = new MiPlaySharedAccessUnitCoordinator(routeParticipantCounts);
         SourceBuffer = sourceBuffer;
         Capture = capture;
     }
@@ -44,12 +47,39 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
         int participantCount = 2,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(audioSources);
-        ArgumentNullException.ThrowIfNull(selection);
-        if (participantCount < 2)
+        if (participantCount is < 2 or > 63)
         {
             throw new ArgumentOutOfRangeException(nameof(participantCount));
         }
+
+        return await StartAsync(
+            audioSources,
+            selection,
+            Enumerable.Repeat(AudioChannelRoute.Stereo, participantCount).ToArray(),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public static async Task<MiPlaySharedAudioSession> StartAsync(
+        IAudioSourceCatalog audioSources,
+        CaptureSelection selection,
+        IReadOnlyList<AudioChannelRoute> participantRoutes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(audioSources);
+        ArgumentNullException.ThrowIfNull(selection);
+        ArgumentNullException.ThrowIfNull(participantRoutes);
+        if (participantRoutes.Count is < 2 or > 63)
+        {
+            throw new ArgumentOutOfRangeException(nameof(participantRoutes));
+        }
+        if (participantRoutes.Any(route => !Enum.IsDefined(route)))
+        {
+            throw new ArgumentOutOfRangeException(nameof(participantRoutes));
+        }
+
+        var routeParticipantCounts = participantRoutes
+            .GroupBy(route => route)
+            .ToDictionary(group => group.Key, group => group.Count());
 
         var sourceBuffer = new PcmFrameBuffer(AudioChannelRoute.Stereo);
         var capture = new SwitchableAudioCaptureSource(audioSources, selection);
@@ -58,7 +88,11 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
             await capture.StartAsync(sourceBuffer, cancellationToken).ConfigureAwait(false);
             await sourceBuffer.PrepareForPlaybackAsync(cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
-            return new MiPlaySharedAudioSession(participantCount, sourceBuffer, capture);
+            return new MiPlaySharedAudioSession(
+                participantRoutes.Count,
+                routeParticipantCounts,
+                sourceBuffer,
+                capture);
         }
         catch
         {
@@ -69,7 +103,7 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
         }
     }
 
-    internal MiPlaySharedAudioSubscription Subscribe()
+    internal MiPlaySharedAudioSubscription Subscribe(AudioChannelRoute route)
     {
         lock (gate)
         {
@@ -84,15 +118,20 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
                     $"The shared MiPlay capture accepts exactly {participantCount} receivers.");
             }
 
+            var accessUnitParticipant = accessUnitCoordinator.Register(route);
             var id = ++nextSubscriberId;
-            var buffer = new PcmFrameBuffer(AudioChannelRoute.Stereo);
+            var buffer = new PcmFrameBuffer(route);
             subscribers.Add(id, buffer);
             if (subscribers.Count == participantCount)
             {
                 SourceBuffer.TrimToLatest(1);
                 fanOutTask = Task.Run(() => RunFanOutAsync(lifetime.Token));
             }
-            return new MiPlaySharedAudioSubscription(this, id, buffer);
+            return new MiPlaySharedAudioSubscription(
+                this,
+                id,
+                buffer,
+                accessUnitParticipant);
         }
     }
 
@@ -199,8 +238,10 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
         }
         if (stopRemainingReceiver)
         {
-            mediaCoordinator.Fail(new OperationCanceledException(
-                "A receiver left the shared MiPlay media session."));
+            var exception = new OperationCanceledException(
+                "A receiver left the shared MiPlay media session.");
+            mediaCoordinator.Fail(exception);
+            accessUnitCoordinator.Fail(exception);
         }
         if (buffer is not null)
         {
@@ -220,6 +261,7 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
         }
         startupFailure = exception;
         mediaCoordinator.Fail(exception);
+        accessUnitCoordinator.Fail(exception);
         openReady.TrySetException(exception);
         foreach (var buffer in subscribers.Values)
         {
@@ -238,7 +280,10 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
         }
 
         lifetime.Cancel();
-        mediaCoordinator.Fail(new OperationCanceledException("The shared MiPlay session was disposed."));
+        var disposedException = new OperationCanceledException(
+            "The shared MiPlay session was disposed.");
+        mediaCoordinator.Fail(disposedException);
+        accessUnitCoordinator.Fail(disposedException);
         try
         {
             await fanOutTask.ConfigureAwait(false);
@@ -271,21 +316,24 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
     {
         private readonly MiPlaySharedAudioSession owner;
         private readonly int id;
+        private readonly MiPlaySharedAccessUnitParticipant accessUnitParticipant;
         private int openSynchronized;
         private int disposed;
 
         internal MiPlaySharedAudioSubscription(
             MiPlaySharedAudioSession owner,
             int id,
-            PcmFrameBuffer pcmBuffer)
+            PcmFrameBuffer pcmBuffer,
+            MiPlaySharedAccessUnitParticipant accessUnitParticipant)
         {
             this.owner = owner;
             this.id = id;
+            this.accessUnitParticipant = accessUnitParticipant;
             PcmBuffer = pcmBuffer;
         }
 
         internal PcmFrameBuffer PcmBuffer { get; }
-        internal bool IsMediaLeader => owner.mediaCoordinator.IsMediaLeader(id);
+        internal bool IsAccessUnitLeader => accessUnitParticipant.IsLeader;
 
         public Task SynchronizeOpenAsync(CancellationToken cancellationToken)
         {
@@ -310,8 +358,8 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
             long accessUnitIndex,
             byte[]? leaderAccessUnit,
             CancellationToken cancellationToken) =>
-            owner.mediaCoordinator.SynchronizeAccessUnitAsync(
-                id,
+            owner.accessUnitCoordinator.SynchronizeAsync(
+                accessUnitParticipant,
                 accessUnitIndex,
                 leaderAccessUnit,
                 cancellationToken);

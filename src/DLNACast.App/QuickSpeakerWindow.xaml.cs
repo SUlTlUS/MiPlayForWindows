@@ -1,4 +1,5 @@
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using DLNACast.App.ViewModels;
@@ -20,7 +21,8 @@ internal sealed partial class QuickSpeakerWindow : Microsoft.UI.Xaml.Window
     private const uint WmRightButtonDown = 0x0204;
     private const uint WmMiddleButtonDown = 0x0207;
     private const uint WmXButtonDown = 0x020B;
-    private const double WindowWidthInDips = 360;
+    private const double NormalWindowWidthInDips = 360;
+    private const double StereoWindowWidthInDips = 460;
     private const double TrayGapInDips = 8;
 
     private readonly MainViewModel _viewModel;
@@ -62,7 +64,9 @@ internal sealed partial class QuickSpeakerWindow : Microsoft.UI.Xaml.Window
         _appWindow.Closing += OnClosing;
         Activated += OnActivated;
         _viewModel.Renderers.CollectionChanged += OnRenderersChanged;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         UpdateEmptyState();
+        UpdateRendererModeLayout();
     }
 
     public void ShowAt(int cursorX, int cursorY)
@@ -71,6 +75,7 @@ internal sealed partial class QuickSpeakerWindow : Microsoft.UI.Xaml.Window
         _showRevision++;
         _anchorX = cursorX;
         _anchorY = cursorY;
+        UpdateRendererModeLayout();
         PositionAndResize();
         _appWindow.Show();
         Activate();
@@ -89,8 +94,11 @@ internal sealed partial class QuickSpeakerWindow : Microsoft.UI.Xaml.Window
         var point = new PointInt32(_anchorX, _anchorY);
         var workArea = DisplayArea.GetFromPoint(point, DisplayAreaFallback.Nearest).WorkArea;
         var gap = (int)Math.Round(TrayGapInDips * scale);
+        var desiredWidthInDips = _viewModel.IsStereoSplitMode
+            ? StereoWindowWidthInDips
+            : NormalWindowWidthInDips;
         var width = Math.Min(
-            (int)Math.Round(WindowWidthInDips * scale),
+            (int)Math.Round(desiredWidthInDips * scale),
             Math.Max(1, workArea.Width - gap * 2));
         var frameSize = GetNonClientFrameSize();
         var contentWidthInDips = Math.Max(1, width - frameSize.Width) / scale;
@@ -114,11 +122,30 @@ internal sealed partial class QuickSpeakerWindow : Microsoft.UI.Xaml.Window
         if (_appWindow.IsVisible) PositionAndResize();
     }
 
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName != nameof(MainViewModel.IsStereoSplitMode)) return;
+        UpdateRendererModeLayout();
+        if (!_appWindow.IsVisible) return;
+        var revision = _showRevision;
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            if (revision == _showRevision && _appWindow.IsVisible) PositionAndResize();
+        });
+    }
+
     private void UpdateEmptyState()
     {
         var hasRenderers = _viewModel.Renderers.Count > 0;
         RendererList.Visibility = hasRenderers ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Visibility = hasRenderers ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void UpdateRendererModeLayout()
+    {
+        var isStereo = _viewModel.IsStereoSplitMode;
+        NormalRendererList.Visibility = isStereo ? Visibility.Collapsed : Visibility.Visible;
+        StereoRendererLists.Visibility = isStereo ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnActivated(object sender, WindowActivatedEventArgs args)
@@ -211,6 +238,7 @@ internal sealed partial class QuickSpeakerWindow : Microsoft.UI.Xaml.Window
         {
             StopClickOutsideMonitoring();
             _viewModel.Renderers.CollectionChanged -= OnRenderersChanged;
+            _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             return;
         }
 

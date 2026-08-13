@@ -8,6 +8,7 @@
           KeyDown="OnRootKeyDown">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -33,63 +34,223 @@
             </Button>
         </Grid>
 
-        <ScrollViewer Grid.Row="1"
+        <Grid Grid.Row="1"
+              Padding="12,0,12,10"
+              ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Padding="10,6"
+                    MinHeight="52"
+                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                    Background="{ThemeResource SubtleSurfaceBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Text.StereoSplit}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap"
+                               MaxLines="2"
+                               VerticalAlignment="Center" />
+                    <ToggleSwitch Grid.Column="1"
+                                  IsOn="{Binding IsStereoSplitMode, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanUseStereoSplit}"
+                                  OnContent=""
+                                  OffContent=""
+                                  MinWidth="0"
+                                  MinHeight="40"
+                                  VerticalAlignment="Center"
+                                  ToolTipService.ToolTip="{Binding Text.StereoSplitTooltip}"
+                                  AutomationProperties.Name="{Binding Text.StereoSplit}" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1"
+                    Padding="10,6"
+                    MinHeight="52"
+                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                    Background="{ThemeResource SubtleSurfaceBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Text.SpeakersOnly}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap"
+                               MaxLines="2"
+                               VerticalAlignment="Center" />
+                    <ToggleSwitch Grid.Column="1"
+                                  IsOn="{Binding IsSpeakerOnlyPlayback, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanUseSpeakerOnlyPlayback}"
+                                  OnContent=""
+                                  OffContent=""
+                                  MinWidth="0"
+                                  MinHeight="40"
+                                  VerticalAlignment="Center"
+                                  ToolTipService.ToolTip="{Binding Text.SpeakersOnlyTooltip}"
+                                  AutomationProperties.Name="{Binding Text.SpeakersOnly}" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <ScrollViewer Grid.Row="2"
                       Padding="12,0,12,12"
                       HorizontalScrollMode="Disabled"
                       HorizontalScrollBarVisibility="Disabled"
                       VerticalScrollBarVisibility="Auto">
             <Grid>
-                <ItemsControl x:Name="RendererList"
-                              ItemsSource="{Binding Renderers}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Margin="0,0,0,8"
-                                    Padding="12,6"
-                                    MinHeight="52"
-                                    CornerRadius="{ThemeResource OverlayCornerRadius}"
-                                    Background="{ThemeResource SubtleSurfaceBrush}">
-                                <Grid>
-                                    <CheckBox Content="{Binding FriendlyName}"
-                                              IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                <Grid x:Name="RendererList">
+                    <ItemsControl x:Name="NormalRendererList"
+                                  ItemsSource="{Binding Renderers}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,8"
+                                        Padding="12,6"
+                                        MinHeight="52"
+                                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                        Background="{ThemeResource SubtleSurfaceBrush}">
+                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                               IsEnabled="{Binding IsSelectionEnabled}"
-                                              Visibility="{Binding NormalSelectionVisibility}"
                                               MinHeight="44"
                                               HorizontalAlignment="Stretch"
-                                              HorizontalContentAlignment="Left"
-                                              AutomationProperties.Name="{Binding FriendlyName}" />
-
-                                    <Grid Visibility="{Binding StereoSelectionVisibility}"
-                                          ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-
+                                              HorizontalContentAlignment="Stretch"
+                                              AutomationProperties.Name="{Binding FriendlyName}">
                                         <TextBlock Text="{Binding FriendlyName}"
                                                    FontWeight="SemiBold"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center" />
-                                        <CheckBox Grid.Column="1"
-                                                  Content="L"
-                                                  IsChecked="{Binding IsLeftChannel, Mode=TwoWay}"
-                                                  IsEnabled="{Binding IsSelectionEnabled}"
-                                                  MinHeight="44"
-                                                  ToolTipService.ToolTip="{Binding LeftChannelText}"
-                                                  AutomationProperties.Name="{Binding LeftChannelSelectionAutomationName}" />
-                                        <CheckBox Grid.Column="2"
-                                                  Content="R"
-                                                  IsChecked="{Binding IsRightChannel, Mode=TwoWay}"
-                                                  IsEnabled="{Binding IsSelectionEnabled}"
-                                                  MinHeight="44"
-                                                  ToolTipService.ToolTip="{Binding RightChannelText}"
-                                                  AutomationProperties.Name="{Binding RightChannelSelectionAutomationName}" />
-                                    </Grid>
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </CheckBox>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Grid x:Name="StereoRendererLists"
+                          ColumnSpacing="10"
+                          Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Padding="10"
+                                CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                Background="{ThemeResource SubtleSurfaceBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1">
+                            <StackPanel Spacing="8">
+                                <Grid MinHeight="30">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <Border Width="26"
+                                                Height="26"
+                                                CornerRadius="13"
+                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                BorderThickness="1">
+                                            <TextBlock Text="L"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+                                        <TextBlock Text="{Binding LeftChannelText}"
+                                                   FontWeight="SemiBold"
+                                                   VerticalAlignment="Center"
+                                                   AutomationProperties.HeadingLevel="Level2" />
+                                    </StackPanel>
                                 </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                                <Rectangle Height="1"
+                                           Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
+                                <ItemsControl ItemsSource="{Binding Renderers}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="0,0,0,6"
+                                                    Padding="8,4"
+                                                    MinHeight="48"
+                                                    CornerRadius="6"
+                                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                                <CheckBox IsChecked="{Binding IsLeftChannel, Mode=TwoWay}"
+                                                          IsEnabled="{Binding IsSelectionEnabled}"
+                                                          MinHeight="40"
+                                                          HorizontalAlignment="Stretch"
+                                                          HorizontalContentAlignment="Stretch"
+                                                          AutomationProperties.Name="{Binding LeftChannelSelectionAutomationName}">
+                                                    <TextBlock Text="{Binding FriendlyName}"
+                                                               FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               ToolTipService.ToolTip="{Binding FriendlyName}" />
+                                                </CheckBox>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1"
+                                Padding="10"
+                                CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                Background="{ThemeResource SubtleSurfaceBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1">
+                            <StackPanel Spacing="8">
+                                <Grid MinHeight="30">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <Border Width="26"
+                                                Height="26"
+                                                CornerRadius="13"
+                                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                BorderThickness="1">
+                                            <TextBlock Text="R"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+                                        <TextBlock Text="{Binding RightChannelText}"
+                                                   FontWeight="SemiBold"
+                                                   VerticalAlignment="Center"
+                                                   AutomationProperties.HeadingLevel="Level2" />
+                                    </StackPanel>
+                                </Grid>
+                                <Rectangle Height="1"
+                                           Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
+                                <ItemsControl ItemsSource="{Binding Renderers}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="0,0,0,6"
+                                                    Padding="8,4"
+                                                    MinHeight="48"
+                                                    CornerRadius="6"
+                                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                                <CheckBox IsChecked="{Binding IsRightChannel, Mode=TwoWay}"
+                                                          IsEnabled="{Binding IsSelectionEnabled}"
+                                                          MinHeight="40"
+                                                          HorizontalAlignment="Stretch"
+                                                          HorizontalContentAlignment="Stretch"
+                                                          AutomationProperties.Name="{Binding RightChannelSelectionAutomationName}">
+                                                    <TextBlock Text="{Binding FriendlyName}"
+                                                               FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               ToolTipService.ToolTip="{Binding FriendlyName}" />
+                                                </CheckBox>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
 
                 <Border x:Name="EmptyState"
                         Visibility="Collapsed"

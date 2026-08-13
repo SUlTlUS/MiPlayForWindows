@@ -56,12 +56,6 @@ public sealed record MiPlaySystemAudioRequest(
         {
             throw new ArgumentOutOfRangeException(nameof(ChannelRoute));
         }
-        if (SharedAudioSession is not null && ChannelRoute != AudioChannelRoute.Stereo)
-        {
-            throw new ArgumentException(
-                "The shared MiPlay capture currently provides one full stereo PCM source.",
-                nameof(ChannelRoute));
-        }
         if (SharedAudioSession is not null && PairSynchronization is not null)
         {
             throw new ArgumentException(

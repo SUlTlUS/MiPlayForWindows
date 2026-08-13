@@ -36,10 +36,10 @@ public sealed class UiText
     public string Refresh => SystemLanguage.Select("刷新", "Refresh");
     public string RefreshAudioSources => SystemLanguage.Select("刷新音频来源", "Refresh audio sources");
     public string PlaybackDevices => SystemLanguage.Select("播放设备", "Playback devices");
-    public string StereoSplit => SystemLanguage.Select("双音箱立体声", "Two-speaker stereo");
+    public string StereoSplit => SystemLanguage.Select("立体声", "Stereo");
     public string StereoSplitTooltip => SystemLanguage.Select(
-        "分别把左、右声道投送到两台音箱；开启后切换到 DLNA，建议使用同型号音箱",
-        "Cast the left and right channels to separate speakers; enabling it switches to DLNA and works best with matching speakers");
+        "左、右声道可分别选择多台音箱；同一台音箱只能分配到一个声道",
+        "Assign multiple speakers to either channel; each speaker can belong to only one channel");
     public string RefreshPlaybackDevices => SystemLanguage.Select("刷新播放设备", "Refresh playback devices");
     public string NoPlaybackDevices => SystemLanguage.Select(
         "未发现播放设备，请确认音箱和电脑位于同一局域网。",
