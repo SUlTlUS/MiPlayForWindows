@@ -6,14 +6,14 @@ namespace DLNACast.Core.MiPlay;
 
 /// <summary>
 /// Owns one Windows loopback capture for a multi-receiver MiPlay pair and
-/// fans its PCM frames out to independent per-receiver AAC/media pipelines.
-/// Sharing capture avoids opening two loopback clients on the virtual speaker;
-/// keeping the encoders and packetizers separate preserves the audible path.
+/// coordinates the common TIME_OFFSET, AAC data, and RTP media timeline used
+/// by the rooted-phone pair flow.
 /// </summary>
 public sealed class MiPlaySharedAudioSession : IAsyncDisposable
 {
     private readonly Lock gate = new();
     private readonly int participantCount;
+    private readonly MiPlaySharedMediaCoordinator mediaCoordinator;
     private readonly CancellationTokenSource lifetime = new();
     private readonly Dictionary<int, PcmFrameBuffer> subscribers = [];
     private readonly TaskCompletionSource openReady =
@@ -30,6 +30,7 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
         SwitchableAudioCaptureSource capture)
     {
         this.participantCount = participantCount;
+        mediaCoordinator = new MiPlaySharedMediaCoordinator(participantCount);
         SourceBuffer = sourceBuffer;
         Capture = capture;
     }
@@ -182,6 +183,7 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
     {
         PcmFrameBuffer? buffer;
         var disposeSession = false;
+        var stopRemainingReceiver = false;
         lock (gate)
         {
             if (subscribers.Remove(id, out buffer))
@@ -192,7 +194,13 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
                         "A receiver left before the shared MiPlay capture became ready."));
                 }
                 disposeSession = subscribers.Count == 0;
+                stopRemainingReceiver = subscribers.Count > 0;
             }
+        }
+        if (stopRemainingReceiver)
+        {
+            mediaCoordinator.Fail(new OperationCanceledException(
+                "A receiver left the shared MiPlay media session."));
         }
         if (buffer is not null)
         {
@@ -211,6 +219,7 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
             return;
         }
         startupFailure = exception;
+        mediaCoordinator.Fail(exception);
         openReady.TrySetException(exception);
         foreach (var buffer in subscribers.Values)
         {
@@ -229,6 +238,7 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
         }
 
         lifetime.Cancel();
+        mediaCoordinator.Fail(new OperationCanceledException("The shared MiPlay session was disposed."));
         try
         {
             await fanOutTask.ConfigureAwait(false);
@@ -275,6 +285,7 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
         }
 
         internal PcmFrameBuffer PcmBuffer { get; }
+        internal bool IsMediaLeader => owner.mediaCoordinator.IsMediaLeader(id);
 
         public Task SynchronizeOpenAsync(CancellationToken cancellationToken)
         {
@@ -284,6 +295,26 @@ public sealed class MiPlaySharedAudioSession : IAsyncDisposable
             }
             return owner.SynchronizeOpenAsync(cancellationToken);
         }
+
+        public Task<ulong> SynchronizeTimeOffsetAsync(
+            ulong candidate,
+            CancellationToken cancellationToken) =>
+            owner.mediaCoordinator.SynchronizeTimeOffsetAsync(id, candidate, cancellationToken);
+
+        public Task<long> SynchronizeMediaAsync(
+            ulong timeOffset,
+            CancellationToken cancellationToken) =>
+            owner.mediaCoordinator.SynchronizeMediaAsync(id, timeOffset, cancellationToken);
+
+        public Task<byte[]> SynchronizeAccessUnitAsync(
+            long accessUnitIndex,
+            byte[]? leaderAccessUnit,
+            CancellationToken cancellationToken) =>
+            owner.mediaCoordinator.SynchronizeAccessUnitAsync(
+                id,
+                accessUnitIndex,
+                leaderAccessUnit,
+                cancellationToken);
 
         public async ValueTask DisposeAsync()
         {

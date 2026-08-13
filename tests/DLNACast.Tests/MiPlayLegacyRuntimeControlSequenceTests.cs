@@ -24,16 +24,24 @@ public sealed class MiPlayLegacyRuntimeControlSequenceTests
         var sequence = new MiPlayLegacyRuntimeControlSequence();
 
         var pause = sequence.PreparePause();
-        var resume = sequence.PrepareResume();
+        var resumePair = sequence.PrepareResumePair();
         var heartbeat = sequence.PrepareHeartbeat();
 
         AssertCommand(pause, MiPlayProtocolConstants.PauseCommand, 16, "");
         Assert.Equal(MiPlayProtocolConstants.PauseAcknowledgementCommand, pause.AcknowledgementCommand);
         Assert.False(pause.WaitForAcknowledgement);
-        AssertCommand(resume, MiPlayProtocolConstants.ResumeCommand, 17, "");
-        Assert.Equal(MiPlayProtocolConstants.ResumeAcknowledgementCommand, resume.AcknowledgementCommand);
-        Assert.False(resume.WaitForAcknowledgement);
-        AssertCommand(heartbeat, MiPlayProtocolConstants.HeartbeatCommand, 18, "");
+        AssertCommand(resumePair.First, MiPlayProtocolConstants.ResumeCommand, 17, "");
+        Assert.Equal(
+            MiPlayProtocolConstants.ResumeAcknowledgementCommand,
+            resumePair.First.AcknowledgementCommand);
+        Assert.False(resumePair.First.WaitForAcknowledgement);
+        AssertCommand(resumePair.Second, MiPlayProtocolConstants.ResumeCommand, 18, "");
+        Assert.Equal(
+            MiPlayProtocolConstants.ResumeAcknowledgementCommand,
+            resumePair.Second.AcknowledgementCommand);
+        Assert.False(resumePair.Second.WaitForAcknowledgement);
+        Assert.Equal(29, MiPlayLegacyRuntimeControlSequence.CapturedResumeRepeatDelayMilliseconds);
+        AssertCommand(heartbeat, MiPlayProtocolConstants.HeartbeatCommand, 19, "");
         Assert.True(heartbeat.WaitForAcknowledgement);
     }
 

@@ -265,10 +265,13 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             ? null
             : new ActiveCaptureRegistration(this, localCapture);
         await pcmBuffer.PrepareForPlaybackAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        await using var encoder = MiPlayFfmpegAacEncoder.Start(
-            request.FfmpegPath,
-            MiPlayProtocolConstants.AacBitRate,
-            "aac_mf");
+        var ownsEncoder = sharedSubscription is null || sharedSubscription.IsMediaLeader;
+        await using var encoder = ownsEncoder
+            ? MiPlayFfmpegAacEncoder.Start(
+                request.FfmpegPath,
+                MiPlayProtocolConstants.AacBitRate,
+                "aac_mf")
+            : null;
         using var encoderInputLease = new CancellationSourceLease(cancellationToken);
         var encoderInputRun = encoderInputLease.Source;
         var encoderInputReady = new TaskCompletionSource(
@@ -298,7 +301,10 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                             sourcePlaybackControl.SetDesiredPaused(false);
                             break;
                     }
-                    await encoder.WritePcmAsync(pcm, encoderInputRun.Token).ConfigureAwait(false);
+                    if (encoder is not null)
+                    {
+                        await encoder.WritePcmAsync(pcm, encoderInputRun.Token).ConfigureAwait(false);
+                    }
                 }
             }
             catch (OperationCanceledException) when (encoderInputRun.IsCancellationRequested)
@@ -369,6 +375,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             beforeTimeOffset,
             postOpenContextSent.Task,
             rtspReady,
+            sharedSubscription,
             run.Token);
 
         report(new MiPlayCastDiagnostics(
@@ -452,7 +459,15 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             throw new InvalidOperationException("The RTSP TIME_OFFSET changed across the control gate.");
         }
 
-        if (request.PairSynchronization is not null)
+        long? sharedMediaStartedAt = null;
+        if (sharedSubscription is not null)
+        {
+            sharedMediaStartedAt = await sharedSubscription.SynchronizeMediaAsync(
+                    timeOffset,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (request.PairSynchronization is not null)
         {
             await request.PairSynchronization.SynchronizeMediaAsync(cancellationToken).ConfigureAwait(false);
             pcmBuffer.TrimToLatest(1);
@@ -483,8 +498,8 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         var packetizer = new MiPlayWfdAudioPacketizer(
             initialProgramClockReference90Khz: MiPlayWfdMediaClock.CreateInitialProgramClockReference90Khz(
                 timeOffset,
-                MiPlayProtocolConstants.SystemAudioPlaybackDelayMicroseconds));
-        var mediaStartedAt = Stopwatch.GetTimestamp();
+                MiPlayProtocolConstants.OtherNetworkPlaybackDelayMicroseconds));
+        var mediaStartedAt = sharedMediaStartedAt ?? Stopwatch.GetTimestamp();
         long totalBytes = 0;
         long totalRtpFrames = 0;
         long accessUnitIndex = 0;
@@ -494,15 +509,42 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         double maximumMediaSendGapMilliseconds = 0;
         long lateMediaSends = 0;
         long catchUpMediaSends = 0;
+        var stallRecoveryPacing = false;
 
         try
         {
             while (true)
             {
                 ThrowIfBackgroundFailed(rtspTask, timerTask, postOpenControlTask);
-                var accessUnit = await encoder.ReadAccessUnitAsync(cancellationToken).ConfigureAwait(false) ??
-                    throw new EndOfStreamException("FFmpeg ended while the MiPlay session was active.");
-                var packets = packetizer.PacketizeAccessUnit(accessUnit);
+                byte[] accessUnit;
+                if (sharedSubscription is null)
+                {
+                    accessUnit = await encoder!.ReadAccessUnitAsync(cancellationToken).ConfigureAwait(false) ??
+                        throw new EndOfStreamException("FFmpeg ended while the MiPlay session was active.");
+                }
+                else
+                {
+                    byte[]? leaderAccessUnit = null;
+                    if (sharedSubscription.IsMediaLeader)
+                    {
+                        leaderAccessUnit = await encoder!.ReadAccessUnitAsync(cancellationToken)
+                            .ConfigureAwait(false) ??
+                            throw new EndOfStreamException(
+                                "FFmpeg ended while the shared MiPlay session was active.");
+                    }
+                    accessUnit = await sharedSubscription.SynchronizeAccessUnitAsync(
+                            accessUnitIndex,
+                            leaderAccessUnit,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                var liveProgramClockReference90Khz =
+                    MiPlayWfdMediaClock.CreateInitialProgramClockReference90Khz(
+                        GetMonotonicMicroseconds(),
+                        MiPlayProtocolConstants.OtherNetworkPlaybackDelayMicroseconds);
+                var packets = packetizer.PacketizeAccessUnit(
+                    accessUnit,
+                    liveProgramClockReference90Khz);
                 if (packets.Count is < 1 or > 2)
                 {
                     throw new InvalidOperationException("An AAC access unit exceeded the validated two-fragment boundary.");
@@ -538,6 +580,12 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                     maximumMediaSendGapMilliseconds = Math.Max(
                         maximumMediaSendGapMilliseconds,
                         sendGapMilliseconds);
+                    if (!stallRecoveryPacing && MiPlayMediaStallRecoveryPlan.ShouldActivate(
+                            accessUnitIndex,
+                            sendGapMilliseconds))
+                    {
+                        stallRecoveryPacing = true;
+                    }
                 }
                 previousMediaWriteCompletedAt = mediaWriteCompletedAt;
                 if (accessUnitIndex == 0)
@@ -558,10 +606,17 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                     var nominalAccessUnitTicks =
                         MiPlayWfdStartupPacingPlan.NominalAccessUnitMilliseconds *
                         Stopwatch.Frequency / 1_000d;
-                    if (-remaining >= nominalAccessUnitTicks)
+                    if (!stallRecoveryPacing && -remaining >= nominalAccessUnitTicks)
                     {
                         catchUpMediaSends++;
                     }
+                }
+
+                if (stallRecoveryPacing)
+                {
+                    remaining = MiPlayMediaStallRecoveryPlan.PreserveNominalGap(
+                        remaining,
+                        Stopwatch.Frequency);
                 }
 
                 if (accessUnitIndex % 25 == 0)
@@ -946,10 +1001,28 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                     continue;
                 }
 
-                var command = shouldPause
-                    ? sequence.PreparePause()
-                    : sequence.PrepareResume();
-                await ExecuteRuntimeControlAsync(stream, command, cancellationToken).ConfigureAwait(false);
+                if (shouldPause)
+                {
+                    await ExecuteRuntimeControlAsync(
+                        stream,
+                        sequence.PreparePause(),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    var resumePair = sequence.PrepareResumePair();
+                    await ExecuteRuntimeControlAsync(
+                        stream,
+                        resumePair.First,
+                        cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(
+                        MiPlayLegacyRuntimeControlSequence.CapturedResumeRepeatDelayMilliseconds,
+                        cancellationToken).ConfigureAwait(false);
+                    await ExecuteRuntimeControlAsync(
+                        stream,
+                        resumePair.Second,
+                        cancellationToken).ConfigureAwait(false);
+                }
                 receiverPaused = shouldPause;
                 sourcePlaybackControl.SetReceiverPaused(shouldPause);
                 continue;
@@ -1130,6 +1203,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         TaskCompletionSource<ulong> beforeTimeOffset,
         Task postOpenContextSent,
         TaskCompletionSource<ulong> ready,
+        MiPlaySharedAudioSession.MiPlaySharedAudioSubscription? sharedSubscription,
         CancellationToken cancellationToken)
     {
         try
@@ -1165,6 +1239,14 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                            out var consumed))
                 {
                     var monotonicMicroseconds = GetMonotonicMicroseconds();
+                    if (sharedSubscription is not null &&
+                        session.Phase == MiPlayWfdSourceRtspPhase.AwaitingPlay)
+                    {
+                        monotonicMicroseconds = await sharedSubscription.SynchronizeTimeOffsetAsync(
+                                monotonicMicroseconds,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                     var transition = session.ProcessInbound(
                         pending.AsSpan(0, consumed),
                         DateTimeOffset.UtcNow,

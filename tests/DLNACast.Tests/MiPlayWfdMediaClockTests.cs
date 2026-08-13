@@ -63,4 +63,29 @@ public sealed class MiPlayWfdMediaClockTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             MiPlayWfdMediaClock.ConvertStopwatchTicksToMicroseconds(ticks, 0));
     }
+
+    [Fact]
+    public void NativePairPcrTracksLiveMonotonicTimeInsteadOfRtpAccessUnitCount()
+    {
+        const ulong capturedTimeOffsetMicroseconds = 58_878_859_721;
+        const ulong firstMediaMonotonicMicroseconds = 58_878_863_788;
+        const ulong lastMediaMonotonicMicroseconds = 58_910_782_339;
+
+        var firstPcr = MiPlayWfdMediaClock.CreateInitialProgramClockReference90Khz(
+            firstMediaMonotonicMicroseconds,
+            MiPlayProtocolConstants.OtherNetworkPlaybackDelayMicroseconds);
+        var lastPcr = MiPlayWfdMediaClock.CreateInitialProgramClockReference90Khz(
+            lastMediaMonotonicMicroseconds,
+            MiPlayProtocolConstants.OtherNetworkPlaybackDelayMicroseconds);
+
+        Assert.Equal(5_299_007_740UL, firstPcr);
+        Assert.Equal(5_301_880_410UL, lastPcr);
+        Assert.InRange(
+            Math.Abs(
+                (long)(lastPcr - firstPcr) -
+                (long)((lastMediaMonotonicMicroseconds - firstMediaMonotonicMicroseconds) * 90 / 1_000)),
+            0,
+            1);
+        Assert.Equal(4_067UL, firstMediaMonotonicMicroseconds - capturedTimeOffsetMicroseconds);
+    }
 }

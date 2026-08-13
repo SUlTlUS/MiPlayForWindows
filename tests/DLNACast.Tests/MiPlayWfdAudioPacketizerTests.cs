@@ -70,6 +70,31 @@ public sealed class MiPlayWfdAudioPacketizerTests
         Assert.Equal((uint)1_919, next.Timestamp90Khz);
     }
 
+    [Fact]
+    public void PairPacketsShareAacAndRtpTimelineWhileKeepingPerSendLivePcr()
+    {
+        var firstPacketizer = new MiPlayWfdAudioPacketizer();
+        var secondPacketizer = new MiPlayWfdAudioPacketizer();
+        var source = MiPlayAdtsStreamParserTests.CreateMpeg4AccessUnit(682, 0x5a);
+        const ulong firstLivePcr = 5_299_007_740;
+        const ulong secondLivePcr = 5_299_007_741;
+
+        var first = Assert.Single(firstPacketizer.PacketizeAccessUnit(source, firstLivePcr));
+        var second = Assert.Single(secondPacketizer.PacketizeAccessUnit(source, secondLivePcr));
+
+        Assert.Equal(first.SequenceNumber, second.SequenceNumber);
+        Assert.Equal(first.Timestamp90Khz, second.Timestamp90Khz);
+        Assert.Equal(first.NormalizedAdtsAccessUnit, second.NormalizedAdtsAccessUnit);
+        Assert.Equal(firstLivePcr, ReadFirstPcrBase(first.TransportStream));
+        Assert.Equal(secondLivePcr, ReadFirstPcrBase(second.TransportStream));
+
+        var firstWithoutPcr = first.TransportStream.ToArray();
+        var secondWithoutPcr = second.TransportStream.ToArray();
+        ClearFirstPcr(firstWithoutPcr);
+        ClearFirstPcr(secondWithoutPcr);
+        Assert.Equal(firstWithoutPcr, secondWithoutPcr);
+    }
+
     [Theory]
     [InlineData(0, 0)]
     [InlineData(1, 1_919)]
@@ -79,5 +104,37 @@ public sealed class MiPlayWfdAudioPacketizerTests
     public void ReproducesCapturedMicrosecondQuantizedRtpTimestamps(uint index, uint expected)
     {
         Assert.Equal(expected, MiPlayWfdAudioPacketizer.CalculateCapturedTimestamp90Khz(index));
+    }
+
+    private static ulong ReadFirstPcrBase(byte[] transportStream)
+    {
+        var pcr = FindFirstPcr(transportStream);
+        var bytes = transportStream.AsSpan(pcr, 6);
+        return ((ulong)bytes[0] << 25) |
+               ((ulong)bytes[1] << 17) |
+               ((ulong)bytes[2] << 9) |
+               ((ulong)bytes[3] << 1) |
+               ((ulong)bytes[4] >> 7);
+    }
+
+    private static void ClearFirstPcr(byte[] transportStream)
+    {
+        var pcr = FindFirstPcr(transportStream);
+        transportStream.AsSpan(pcr, 6).Clear();
+    }
+
+    private static int FindFirstPcr(byte[] transportStream)
+    {
+        for (var offset = 0; offset + MiPlayProtocolConstants.MpegTsPacketLength <= transportStream.Length;
+             offset += MiPlayProtocolConstants.MpegTsPacketLength)
+        {
+            var packet = transportStream.AsSpan(offset, MiPlayProtocolConstants.MpegTsPacketLength);
+            var adaptationFieldControl = (packet[3] >> 4) & 0x03;
+            if (adaptationFieldControl is 2 or 3 && packet[4] >= 7 && (packet[5] & 0x10) != 0)
+            {
+                return offset + 6;
+            }
+        }
+        throw new InvalidOperationException("The transport stream does not contain a PCR.");
     }
 }

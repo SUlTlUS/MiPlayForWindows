@@ -16,6 +16,8 @@ internal sealed record MiPlayLegacyRuntimeControlCommand(
 internal sealed class MiPlayLegacyRuntimeControlSequence(
     ushort initialSequence = MiPlayLegacyPostOpenPlaybackSession.FirstPeriodicHeartbeatSequence)
 {
+    public const int CapturedResumeRepeatDelayMilliseconds = 29;
+
     private ushort nextSequence = initialSequence;
 
     public MiPlayLegacyRuntimeControlCommand PrepareHeartbeat() =>
@@ -37,6 +39,10 @@ internal sealed class MiPlayLegacyRuntimeControlSequence(
             MiPlayProtocolConstants.ResumeAcknowledgementCommand,
             [],
             waitForAcknowledgement: false);
+
+    public (MiPlayLegacyRuntimeControlCommand First, MiPlayLegacyRuntimeControlCommand Second)
+        PrepareResumePair() =>
+        (PrepareResume(), PrepareResume());
 
     public MiPlayLegacyRuntimeControlCommand PrepareSetVolume(int volume)
     {

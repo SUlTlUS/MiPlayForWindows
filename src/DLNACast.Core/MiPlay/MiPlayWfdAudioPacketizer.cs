@@ -84,7 +84,8 @@ public sealed class MiPlayWfdAudioPacketizer
     /// fragment has the marker bit, exactly as in the rooted-phone trace.
     /// </summary>
     public IReadOnlyList<MiPlayWfdAudioPacket> PacketizeAccessUnit(
-        ReadOnlySpan<byte> adtsAccessUnit)
+        ReadOnlySpan<byte> adtsAccessUnit,
+        ulong? liveProgramClockReference90Khz = null)
     {
         var normalized = MiPlayAdtsStreamParser.NormalizeMpeg2AacLc48KhzStereo(adtsAccessUnit);
         var includeProgramTables = ShouldIncludeProgramTables(
@@ -92,8 +93,9 @@ public sealed class MiPlayWfdAudioPacketizer
             firstPeriodicTableAccessUnitIndex,
             periodicTableAccessUnitInterval);
         ulong? programClockReference = includeProgramTables
-            ? initialProgramClockReference90Khz +
-              CalculateCapturedTimestamp90Khz(accessUnitIndex)
+            ? liveProgramClockReference90Khz ??
+              (initialProgramClockReference90Khz +
+               CalculateCapturedTimestamp90Khz(accessUnitIndex))
             : null;
         var muxed = muxer.MuxAdtsAccessUnit(normalized, timestamp90Khz, programClockReference);
         var maximumPayloadLength = MiPlayRtpPacketCodec.MaximumMpegTsPayloadLength;
