@@ -272,6 +272,9 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                 MiPlayProtocolConstants.AacBitRate,
                 "aac_mf")
             : null;
+        var encodedAccessUnits = encoder is null
+            ? null
+            : new MiPlayOrderedAccessUnitBuffer();
         using var encoderInputLease = new CancellationSourceLease(cancellationToken);
         var encoderInputRun = encoderInputLease.Source;
         var encoderInputReady = new TaskCompletionSource(
@@ -311,7 +314,36 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             {
             }
         }, encoderInputRun.Token);
-
+        var encoderReaderTask = encoder is null
+            ? Task.CompletedTask
+            : Task.Run(async () =>
+            {
+                try
+                {
+                    while (!encoderInputRun.IsCancellationRequested)
+                    {
+                        var accessUnit = await encoder.ReadAccessUnitAsync(encoderInputRun.Token)
+                            .ConfigureAwait(false);
+                        if (accessUnit is null)
+                        {
+                            encodedAccessUnits!.Complete();
+                            return;
+                        }
+                        await encodedAccessUnits!.WriteAsync(accessUnit, encoderInputRun.Token)
+                            .ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException exception)
+                    when (encoderInputRun.IsCancellationRequested)
+                {
+                    encodedAccessUnits!.Complete(exception);
+                }
+                catch (Exception exception)
+                {
+                    encodedAccessUnits!.Complete(exception);
+                    throw;
+                }
+            }, encoderInputRun.Token);
         report(new MiPlayCastDiagnostics(
             MiPlayCastState.AwaitingReceiver,
             SystemLanguage.Select(
@@ -510,28 +542,31 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
         double maximumMediaSendGapMilliseconds = 0;
         long lateMediaSends = 0;
         long catchUpMediaSends = 0;
-        var stallRecoveryPacing = false;
+        long mediaTimelineRebases = 0;
 
         try
         {
             while (true)
             {
-                ThrowIfBackgroundFailed(rtspTask, timerTask, postOpenControlTask);
+                ThrowIfBackgroundFailed(
+                    rtspTask,
+                    timerTask,
+                    postOpenControlTask,
+                    encoderWriterTask,
+                    encoderReaderTask);
                 byte[] accessUnit;
                 if (sharedSubscription is null)
                 {
-                    accessUnit = await encoder!.ReadAccessUnitAsync(cancellationToken).ConfigureAwait(false) ??
-                        throw new EndOfStreamException("FFmpeg ended while the MiPlay session was active.");
+                    accessUnit = await encodedAccessUnits!.ReadAsync(cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 else
                 {
                     byte[]? leaderAccessUnit = null;
                     if (sharedSubscription.IsAccessUnitLeader)
                     {
-                        leaderAccessUnit = await encoder!.ReadAccessUnitAsync(cancellationToken)
-                            .ConfigureAwait(false) ??
-                            throw new EndOfStreamException(
-                                "FFmpeg ended while the shared MiPlay session was active.");
+                        leaderAccessUnit = await encodedAccessUnits!.ReadAsync(cancellationToken)
+                            .ConfigureAwait(false);
                     }
                     accessUnit = await sharedSubscription.SynchronizeAccessUnitAsync(
                             accessUnitIndex,
@@ -581,11 +616,15 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                     maximumMediaSendGapMilliseconds = Math.Max(
                         maximumMediaSendGapMilliseconds,
                         sendGapMilliseconds);
-                    if (!stallRecoveryPacing && MiPlayMediaStallRecoveryPlan.ShouldActivate(
+                    if (MiPlayMediaStallRecoveryPlan.ShouldActivate(
                             accessUnitIndex,
                             sendGapMilliseconds))
                     {
-                        stallRecoveryPacing = true;
+                        mediaStartedAt = MiPlayMediaStallRecoveryPlan.RebaseMediaStartedAt(
+                            mediaWriteCompletedAt,
+                            accessUnitIndex + 1,
+                            Stopwatch.Frequency);
+                        mediaTimelineRebases++;
                     }
                 }
                 previousMediaWriteCompletedAt = mediaWriteCompletedAt;
@@ -608,18 +647,10 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                     var nominalAccessUnitTicks =
                         MiPlayWfdStartupPacingPlan.NominalAccessUnitMilliseconds *
                         Stopwatch.Frequency / 1_000d;
-                    if (!stallRecoveryPacing && -remaining >= nominalAccessUnitTicks)
+                    if (-remaining >= nominalAccessUnitTicks)
                     {
                         catchUpMediaSends++;
                     }
-                }
-
-                if (stallRecoveryPacing)
-                {
-                    remaining = MiPlayMediaStallRecoveryPlan.PreserveNominalGap(
-                        remaining,
-                        Stopwatch.Frequency);
-                    pacingDeadline = Stopwatch.GetTimestamp() + remaining;
                 }
 
                 if (accessUnitIndex % 25 == 0)
@@ -666,11 +697,15 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
                                 : minimumMediaSendGapMilliseconds,
                         MaximumMediaSendGapMilliseconds: maximumMediaSendGapMilliseconds,
                         LateMediaSends: lateMediaSends,
-                        CatchUpMediaSends: catchUpMediaSends));
+                        CatchUpMediaSends: catchUpMediaSends,
+                        MediaTimelineRebases: mediaTimelineRebases,
+                        BufferedAccessUnits: encodedAccessUnits?.BufferedCount ?? -1,
+                        AccessUnitBufferStarvations: encodedAccessUnits?.StarvationCount ?? 0));
                     minimumMediaSendGapMilliseconds = double.PositiveInfinity;
                     maximumMediaSendGapMilliseconds = 0;
                     lateMediaSends = 0;
                     catchUpMediaSends = 0;
+                    mediaTimelineRebases = 0;
                 }
 
                 accessUnitIndex = accessUnitsSent;
@@ -688,7 +723,7 @@ public sealed class MiPlayLegacySystemAudioSessionRunner(IAudioSourceCatalog aud
             encoderInputRun.Cancel();
             try
             {
-                await encoderWriterTask.ConfigureAwait(false);
+                await Task.WhenAll(encoderWriterTask, encoderReaderTask).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (encoderInputRun.IsCancellationRequested)
             {

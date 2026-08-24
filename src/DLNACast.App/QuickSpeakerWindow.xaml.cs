@@ -34,6 +34,7 @@ internal sealed partial class QuickSpeakerWindow : Microsoft.UI.Xaml.Window
     private int _anchorX;
     private int _anchorY;
     private int _showRevision;
+    private bool _rendererLayoutRefreshPending;
 
     public QuickSpeakerWindow(MainViewModel viewModel, App application)
     {
@@ -118,8 +119,17 @@ internal sealed partial class QuickSpeakerWindow : Microsoft.UI.Xaml.Window
 
     private void OnRenderersChanged(object? sender, NotifyCollectionChangedEventArgs args)
     {
-        UpdateEmptyState();
-        if (_appWindow.IsVisible) PositionAndResize();
+        if (_rendererLayoutRefreshPending) return;
+        _rendererLayoutRefreshPending = true;
+        if (!DispatcherQueue.TryEnqueue(() =>
+        {
+            _rendererLayoutRefreshPending = false;
+            UpdateEmptyState();
+            if (_appWindow.IsVisible) PositionAndResize();
+        }))
+        {
+            _rendererLayoutRefreshPending = false;
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)

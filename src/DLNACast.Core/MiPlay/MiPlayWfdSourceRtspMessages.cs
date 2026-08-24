@@ -61,15 +61,35 @@ public static class MiPlayWfdSourceRtspMessages
     }
 
     public static byte[] EncodeOptionsResponse(DateTimeOffset timestamp) =>
-        MiPlayRtspWireMessageCodec.Encode(
-            "RTSP/1.0 200 OK",
-            [
-                Header("Date", FormatDate(timestamp)),
-                Header("Server", ""),
-                Header("CSeq", "1"),
-                Header("Public", SourcePublicMethods),
-            ],
-            []);
+        EncodeOptionsResponse(timestamp, cseq: 1);
+
+    public static byte[] EncodeOptionsResponse(
+        DateTimeOffset timestamp,
+        int cseq,
+        string? sessionId = null)
+    {
+        if (cseq < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cseq));
+        }
+        if (sessionId is not null)
+        {
+            ValidateSession(sessionId);
+        }
+
+        var headers = new List<MiPlayRtspWireHeader>
+        {
+            Header("Date", FormatDate(timestamp)),
+            Header("Server", ""),
+            Header("CSeq", cseq.ToString(CultureInfo.InvariantCulture)),
+        };
+        if (sessionId is not null)
+        {
+            headers.Add(Header("Session", $"{sessionId};timeout=60"));
+        }
+        headers.Add(Header("Public", SourcePublicMethods));
+        return MiPlayRtspWireMessageCodec.Encode("RTSP/1.0 200 OK", headers, []);
+    }
 
     public static byte[] EncodeCapabilityQuery(DateTimeOffset timestamp)
     {

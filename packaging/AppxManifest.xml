@@ -9,7 +9,7 @@
   <Identity
     Name="DLNACast.Windows"
     Publisher="CN=DLNACast Development"
-    Version="0.2.4.0"
+    Version="0.2.4.4"
     ProcessorArchitecture="x64" />
 
   <Properties>
@@ -44,7 +44,7 @@
       <uap:VisualElements
         DisplayName="DLNA Cast for Windows"
         Description="将 Windows 音频实时投送到局域网 DLNA 音箱"
-        BackgroundColor="#0F172A"
+        BackgroundColor="transparent"
         Square44x44Logo="Assets\Square44x44Logo.png"
         Square150x150Logo="Assets\Square150x150Logo.png">
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />

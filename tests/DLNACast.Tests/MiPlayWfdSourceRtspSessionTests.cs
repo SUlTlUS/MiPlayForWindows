@@ -118,6 +118,37 @@ public sealed class MiPlayWfdSourceRtspSessionTests
         Assert.True(latency.Ready);
         Assert.Empty(latency.OutboundMessages);
         Assert.Contains("without replying", latency.Boundary, StringComparison.Ordinal);
+
+        var keepalive = session.ProcessInbound(
+            Request(
+                "OPTIONS * RTSP/1.0",
+                [
+                    new("CSeq", "42"),
+                    new("Session", "588290182"),
+                ]),
+            Second44,
+            9_633_364_443);
+        Assert.True(keepalive.Accepted);
+        Assert.True(keepalive.Ready);
+        var responseBytes = Assert.Single(keepalive.OutboundMessages);
+        Assert.True(MiPlayRtspWireMessageCodec.TryDecode(responseBytes, out var response, out _));
+        Assert.NotNull(response);
+        Assert.Equal("RTSP/1.0 200 OK", response.StartLine);
+        Assert.Equal("42", response.GetHeader("CSeq"));
+        Assert.Equal("588290182;timeout=60", response.GetHeader("Session"));
+        Assert.Contains("GET_PARAMETER", response.GetHeader("Public"), StringComparison.Ordinal);
+
+        var unsupported = session.ProcessInbound(
+            Request(
+                "TEARDOWN rtsp://localhost/wfd1.0 RTSP/1.0",
+                [new("CSeq", "43"), new("Session", "588290182")]),
+            Second44,
+            9_633_364_443);
+        Assert.False(unsupported.Accepted);
+        Assert.Contains(
+            "received 'TEARDOWN rtsp://localhost/wfd1.0 RTSP/1.0'",
+            unsupported.Boundary,
+            StringComparison.Ordinal);
     }
 
     [Fact]

@@ -1,8 +1,9 @@
 namespace DLNACast.Core.MiPlay;
 
 /// <summary>
-/// Keeps the original media timeline intact, but prevents queued AAC access
-/// units from being written back-to-back after a long runtime stall.
+/// Rebases the sender's absolute pacing origin after a long runtime stall so
+/// queued AAC access units are not burst-written and recovery does not add a
+/// permanent per-frame delay.
 /// </summary>
 internal static class MiPlayMediaStallRecoveryPlan
 {
@@ -24,8 +25,19 @@ internal static class MiPlayMediaStallRecoveryPlan
             sendGapMilliseconds >= ActivationSendGapMilliseconds;
     }
 
-    public static long PreserveNominalGap(long remainingTicks, long stopwatchFrequency)
+    public static long RebaseMediaStartedAt(
+        long mediaWriteCompletedAt,
+        long accessUnitsSent,
+        long stopwatchFrequency)
     {
+        if (mediaWriteCompletedAt < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(mediaWriteCompletedAt));
+        }
+        if (accessUnitsSent <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(accessUnitsSent));
+        }
         if (stopwatchFrequency <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(stopwatchFrequency));
@@ -35,6 +47,10 @@ internal static class MiPlayMediaStallRecoveryPlan
             MiPlayWfdStartupPacingPlan.NominalAccessUnitMilliseconds *
             stopwatchFrequency /
             1_000d));
-        return Math.Max(remainingTicks, nominalTicks);
+        var dueAfterAccessUnits = checked((long)Math.Round(
+            MiPlayWfdStartupPacingPlan.GetDueAfterMilliseconds(accessUnitsSent) *
+            stopwatchFrequency /
+            1_000d));
+        return checked(mediaWriteCompletedAt + nominalTicks - dueAfterAccessUnits);
     }
 }

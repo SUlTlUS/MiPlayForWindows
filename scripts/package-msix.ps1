@@ -16,6 +16,7 @@ $signing = Join-Path $artifacts 'signing'
 $project = Join-Path $root 'src\DLNACast.App\DLNACast.App.csproj'
 $manifest = Join-Path $root 'packaging\AppxManifest.xml'
 [xml]$manifestXml = Get-Content -LiteralPath $manifest -Raw
+$packageName = $manifestXml.Package.Identity.Name
 $packageVersion = $manifestXml.Package.Identity.Version
 
 $variants = @()
@@ -52,52 +53,78 @@ function Find-WindowsSdkTools {
         Sort-Object { [Version]$_.Name } -Descending |
         Where-Object {
             (Test-Path -LiteralPath (Join-Path $_.FullName 'x64\makeappx.exe')) -and
+            (Test-Path -LiteralPath (Join-Path $_.FullName 'x64\makepri.exe')) -and
             (Test-Path -LiteralPath (Join-Path $_.FullName 'x64\signtool.exe'))
         } |
         Select-Object -First 1
 
     if ($null -eq $candidate) {
-        throw 'Windows SDK x64 MakeAppx.exe and SignTool.exe were not found.'
+        throw 'Windows SDK x64 MakeAppx.exe, MakePri.exe, and SignTool.exe were not found.'
     }
 
     return @{
         MakeAppx = (Join-Path $candidate.FullName 'x64\makeappx.exe')
+        MakePri = (Join-Path $candidate.FullName 'x64\makepri.exe')
         SignTool = (Join-Path $candidate.FullName 'x64\signtool.exe')
         Version = $candidate.Name
     }
 }
 
-function New-Logo([string]$Path, [int]$Width, [int]$Height) {
+function Test-UntrustedDevelopmentRoot(
+    [Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+    [System.Management.Automation.Signature]$Signature) {
+    if ($Signature.Status -notin @('NotTrusted', 'UnknownError')) {
+        return $false
+    }
+
+    $chain = [Security.Cryptography.X509Certificates.X509Chain]::new()
+    try {
+        $chain.ChainPolicy.RevocationMode =
+            [Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+        $chainIsTrusted = $chain.Build($Certificate)
+        $chainStatuses = @($chain.ChainStatus)
+        return -not $chainIsTrusted -and
+            $chainStatuses.Count -gt 0 -and
+            @($chainStatuses | Where-Object {
+                ($_.Status -band
+                    (-bnot [Security.Cryptography.X509Certificates.X509ChainStatusFlags]::UntrustedRoot)) -ne
+                    [Security.Cryptography.X509Certificates.X509ChainStatusFlags]::NoError
+            }).Count -eq 0
+    }
+    finally {
+        $chain.Dispose()
+    }
+}
+
+function New-PackageLogo(
+    [string]$SourcePath,
+    [string]$Path,
+    [int]$Width,
+    [int]$Height,
+    [double]$ContentScale = 0.72) {
     Add-Type -AssemblyName System.Drawing
+    $source = [Drawing.Image]::FromFile($SourcePath)
     $bitmap = [Drawing.Bitmap]::new($Width, $Height)
     $graphics = [Drawing.Graphics]::FromImage($bitmap)
     try {
-        $graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $graphics.Clear([Drawing.Color]::FromArgb(15, 23, 42))
-        $diameter = [Math]::Min($Width, $Height) * 0.68
-        $left = ($Width - $diameter) / 2
-        $top = ($Height - $diameter) / 2
-        $brush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(37, 99, 235))
-        $font = [Drawing.Font]::new('Segoe UI', [Math]::Max(10, $diameter * 0.42), [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
-        $textBrush = [Drawing.SolidBrush]::new([Drawing.Color]::White)
-        try {
-            $graphics.FillEllipse($brush, $left, $top, $diameter, $diameter)
-            $format = [Drawing.StringFormat]::new()
-            $format.Alignment = [Drawing.StringAlignment]::Center
-            $format.LineAlignment = [Drawing.StringAlignment]::Center
-            $graphics.DrawString('D', $font, $textBrush, [Drawing.RectangleF]::new(0, 0, $Width, $Height), $format)
-            $format.Dispose()
-        }
-        finally {
-            $textBrush.Dispose()
-            $font.Dispose()
-            $brush.Dispose()
-        }
+        $graphics.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
+        $graphics.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
+        $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::HighQuality
+        $graphics.Clear([Drawing.Color]::Transparent)
+
+        $logoSize = [Math]::Max(1, [Math]::Floor([Math]::Min($Width, $Height) * $ContentScale))
+        $left = [Math]::Floor(($Width - $logoSize) / 2)
+        $top = [Math]::Floor(($Height - $logoSize) / 2)
+        $destination = [Drawing.Rectangle]::new($left, $top, $logoSize, $logoSize)
+        $graphics.DrawImage($source, $destination)
         $bitmap.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
     }
     finally {
         $graphics.Dispose()
         $bitmap.Dispose()
+        $source.Dispose()
     }
 }
 
@@ -168,10 +195,42 @@ foreach ($variant in $variants) {
 
     $assets = Join-Path $stage 'Assets'
     New-Item -ItemType Directory -Path $assets -Force | Out-Null
-    New-Logo (Join-Path $assets 'StoreLogo.png') 50 50
-    New-Logo (Join-Path $assets 'Square44x44Logo.png') 44 44
-    New-Logo (Join-Path $assets 'Square150x150Logo.png') 150 150
-    New-Logo (Join-Path $assets 'Wide310x150Logo.png') 310 150
+    $sourceIcon = Join-Path $root 'src\DLNACast.App\Assets\MiPlay.ico'
+    New-PackageLogo $sourceIcon (Join-Path $assets 'StoreLogo.png') 50 50
+    New-PackageLogo $sourceIcon (Join-Path $assets 'Square44x44Logo.png') 44 44
+    New-PackageLogo $sourceIcon (Join-Path $assets 'Square150x150Logo.png') 150 150
+    New-PackageLogo $sourceIcon (Join-Path $assets 'Wide310x150Logo.png') 310 150
+
+    # Windows uses target-size variants for taskbar, Start, search, Alt+Tab,
+    # and other non-tile surfaces. Without both unplated theme variants it
+    # synthesizes a colored backplate even when BackgroundColor is transparent.
+    $targetSizes = @(16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 256)
+    foreach ($targetSize in $targetSizes) {
+        foreach ($suffix in @('', '_altform-unplated', '_altform-lightunplated')) {
+            $targetName = "Square44x44Logo.targetsize-${targetSize}${suffix}.png"
+            New-PackageLogo $sourceIcon (Join-Path $assets $targetName) `
+                $targetSize $targetSize 0.9
+        }
+    }
+
+    # The application PRI was compiled before the package-only visual assets
+    # existed. Build a replacement from an isolated root containing that PRI
+    # plus only our logos. Indexing the whole published Windows App SDK payload
+    # would import its nested PRI files and produce duplicate resource entries.
+    $priConfig = Join-Path $publish 'priconfig.xml'
+    $stagePri = Join-Path $stage 'resources.pri'
+    $priRoot = Join-Path $publish 'package-pri-root'
+    $priAssets = Join-Path $priRoot 'Assets'
+    New-Item -ItemType Directory -Path $priAssets -Force | Out-Null
+    Copy-Item -LiteralPath $stagePri -Destination (Join-Path $priRoot 'resources.pri') -Force
+    Get-ChildItem -LiteralPath $assets -Filter '*.png' | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $priAssets $_.Name) -Force
+    }
+    & $sdk.MakePri createconfig /cf $priConfig /dq zh-CN /o
+    if ($LASTEXITCODE -ne 0) { throw "MakePri createconfig failed: $LASTEXITCODE" }
+    if (Test-Path -LiteralPath $stagePri) { Remove-Item -LiteralPath $stagePri -Force }
+    & $sdk.MakePri new /pr $priRoot /cf $priConfig /of $stagePri /in $packageName /o
+    if ($LASTEXITCODE -ne 0) { throw "MakePri new failed: $LASTEXITCODE" }
 
     if (Test-Path -LiteralPath $package) { Remove-Item -LiteralPath $package -Force }
     & $sdk.MakeAppx pack /d $stage /p $package /o
@@ -181,8 +240,8 @@ foreach ($variant in $variants) {
         & $sdk.SignTool sign /fd SHA256 /sha1 $CertificateThumbprint /s My $package
         if ($LASTEXITCODE -ne 0) { throw "SignTool signing failed: $LASTEXITCODE" }
         $signature = Get-AuthenticodeSignature -LiteralPath $package
-        $isUntrustedDevelopmentRoot = $signature.Status -in @('NotTrusted', 'UnknownError') -and
-            $signature.StatusMessage -match 'root certificate.*not trusted'
+        $isUntrustedDevelopmentRoot = $null -ne $signature.SignerCertificate -and
+            (Test-UntrustedDevelopmentRoot $signature.SignerCertificate $signature)
         if ($null -eq $signature.SignerCertificate -or
             $signature.SignerCertificate.Thumbprint -ne $CertificateThumbprint -or
             $signature.SignerCertificate.Subject -ne 'CN=DLNACast Development' -or

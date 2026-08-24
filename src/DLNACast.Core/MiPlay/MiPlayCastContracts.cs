@@ -37,7 +37,10 @@ public sealed record MiPlayCastDiagnostics(
     double MaximumMediaSendGapMilliseconds = 0,
     long LateMediaSends = 0,
     long CatchUpMediaSends = 0,
-    MiPlayCastFailureKind FailureKind = MiPlayCastFailureKind.None);
+    MiPlayCastFailureKind FailureKind = MiPlayCastFailureKind.None,
+    long MediaTimelineRebases = 0,
+    int BufferedAccessUnits = 0,
+    long AccessUnitBufferStarvations = 0);
 
 public sealed record MiPlaySystemAudioRequest(
     RendererDevice Renderer,

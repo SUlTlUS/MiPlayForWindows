@@ -7,6 +7,7 @@ using DLNACast.App.Localization;
 using DLNACast.Core.Abstractions;
 using DLNACast.Core.Audio;
 using DLNACast.Core.Casting;
+using DLNACast.Core.Collections;
 using DLNACast.Core.Localization;
 using DLNACast.Core.MiPlay;
 using DLNACast.Core.Models;
@@ -19,6 +20,7 @@ namespace DLNACast.App.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
+    private readonly BulkObservableCollection<RendererItemViewModel> _renderers = [];
     private readonly IAudioSourceCatalog _audioCatalog;
     private readonly IRendererDiscovery _discovery;
     private readonly Func<CastCoordinator> _coordinatorFactory;
@@ -90,7 +92,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         OpenNetworkSettingsCommand = new RelayCommand(OpenNetworkSettings);
     }
 
-    public ObservableCollection<RendererItemViewModel> Renderers { get; } = [];
+    public ObservableCollection<RendererItemViewModel> Renderers => _renderers;
     public ObservableCollection<AudioSourceItem> Sources { get; } = [];
     public UiText Text { get; } = new();
     public AsyncRelayCommand RefreshRenderersCommand { get; }
@@ -168,15 +170,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public string StereoMasterVolumeText => $"{StereoMasterVolume:F0}%";
     public string StereoMasterVolumeLabel => SystemLanguage.Select("总音量", "Master volume");
     public string StereoMasterVolumeAutomationName => SystemLanguage.Select(
-        "立体声总音量",
-        "Stereo master volume");
-    public bool CanAdjustStereoMasterVolume =>
-        IsStereoSplitMode &&
-        Renderers.Any(renderer => renderer.IsLeftChannel) &&
-        Renderers.Any(renderer => renderer.IsRightChannel) &&
-        Renderers
-            .Where(renderer => renderer.IsLeftChannel || renderer.IsRightChannel)
-            .All(renderer => renderer.CanControlVolume);
+        "总音量",
+        "Master volume");
+    public bool CanAdjustStereoMasterVolume
+    {
+        get
+        {
+            var assigned = GetVolumeTargets();
+            if (assigned.Length == 0 || assigned.Any(renderer => !renderer.CanControlVolume)) return false;
+            return !IsStereoSplitMode ||
+                   (assigned.Any(renderer => renderer.IsLeftChannel) &&
+                    assigned.Any(renderer => renderer.IsRightChannel));
+        }
+    }
 
     public double StereoMasterVolume
     {
@@ -190,9 +196,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 return;
             }
 
-            var assigned = Renderers
-                .Where(renderer => renderer.IsLeftChannel || renderer.IsRightChannel)
-                .ToArray();
+            var assigned = GetVolumeTargets();
             var currentMaster = assigned.Max(renderer => renderer.Volume);
             var scale = currentMaster <= double.Epsilon ? 0 : requested / currentMaster;
 
@@ -740,14 +744,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             RendererItemViewModel[] items = [];
             await RunOnUiAsync(() =>
             {
-                foreach (var renderer in Renderers)
-                {
-                    renderer.SelectionChanged -= OnRendererSelectionChanged;
-                    renderer.ChannelAssignmentChanged -= OnRendererChannelAssignmentChanged;
-                    renderer.VolumeChanged -= OnRendererVolumeChanged;
-                    renderer.Dispose();
-                }
-                Renderers.Clear();
+                var replacement = new List<RendererItemViewModel>(devices.Count);
                 foreach (var device in devices)
                 {
                     var item = new RendererItemViewModel(device, _controller, _logger, _lifetime.Token)
@@ -756,13 +753,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                         IsLeftChannel = IsStereoSplitMode && leftUdns.Contains(device.Udn),
                         IsRightChannel = IsStereoSplitMode && rightUdns.Contains(device.Udn),
                         IsStereoMode = IsStereoSplitMode,
+                        IsSelectionEnabled = !IsBusy,
                     };
                     item.SelectionChanged += OnRendererSelectionChanged;
                     item.ChannelAssignmentChanged += OnRendererChannelAssignmentChanged;
                     item.VolumeChanged += OnRendererVolumeChanged;
-                    Renderers.Add(item);
+                    replacement.Add(item);
                 }
-                items = [.. Renderers];
+
+                foreach (var renderer in Renderers)
+                {
+                    renderer.SelectionChanged -= OnRendererSelectionChanged;
+                    renderer.ChannelAssignmentChanged -= OnRendererChannelAssignmentChanged;
+                    renderer.VolumeChanged -= OnRendererVolumeChanged;
+                    renderer.Dispose();
+                }
+                _renderers.ReplaceAll(replacement);
+                items = [.. replacement];
                 NotifyRendererSelectionChanged();
                 if (updateDiscoveryStatus)
                 {
@@ -1206,7 +1213,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private void OnRendererVolumeChanged(object? sender, EventArgs eventArgs)
     {
-        if (_updatingStereoMasterVolume || !IsStereoSplitMode) return;
+        if (_updatingStereoMasterVolume) return;
         UpdateStereoMasterVolumeFromSelection();
     }
 
@@ -1221,14 +1228,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private void UpdateStereoMasterVolumeFromSelection()
     {
-        var selected = Renderers
-            .Where(renderer =>
-                (renderer.IsLeftChannel || renderer.IsRightChannel) &&
-                renderer.CanControlVolume)
+        var selected = GetVolumeTargets()
+            .Where(renderer => renderer.CanControlVolume)
             .ToArray();
         if (selected.Length == 0) return;
         SetStereoMasterVolume(selected.Max(renderer => renderer.Volume));
     }
+
+    private RendererItemViewModel[] GetVolumeTargets() =>
+        [.. Renderers.Where(renderer => IsStereoSplitMode
+            ? renderer.IsLeftChannel || renderer.IsRightChannel
+            : renderer.IsSelected)];
 
     private void SetStereoMasterVolume(double value)
     {
@@ -1723,7 +1733,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     $"sendGapMin={diagnostics.MinimumMediaSendGapMilliseconds:F3}ms, " +
                     $"sendGapMax={diagnostics.MaximumMediaSendGapMilliseconds:F3}ms, " +
                     $"lateSends={diagnostics.LateMediaSends}, " +
-                    $"catchUpSends={diagnostics.CatchUpMediaSends}");
+                    $"catchUpSends={diagnostics.CatchUpMediaSends}, " +
+                    $"timelineRebases={diagnostics.MediaTimelineRebases}, " +
+                    $"aacFifo={diagnostics.BufferedAccessUnits}, " +
+                    $"aacStarvations={diagnostics.AccessUnitBufferStarvations}");
                 _nextDiagnosticsLogAt = DateTimeOffset.UtcNow.AddSeconds(5);
             }
             if (diagnostics.State == MiPlayCastState.Error)

@@ -9,6 +9,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -104,7 +105,34 @@
             </Border>
         </Grid>
 
-        <ScrollViewer Grid.Row="2"
+        <Border Grid.Row="2"
+                Margin="12,0,12,10"
+                Padding="12,8"
+                CornerRadius="{ThemeResource OverlayCornerRadius}"
+                Background="{ThemeResource SubtleSurfaceBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1">
+            <StackPanel Spacing="4">
+                <Grid>
+                    <TextBlock Text="{Binding StereoMasterVolumeLabel}"
+                               FontSize="12"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding StereoMasterVolumeText}"
+                               HorizontalAlignment="Right"
+                               FontSize="12"
+                               FontWeight="SemiBold" />
+                </Grid>
+                <Slider Margin="0"
+                        Minimum="0"
+                        Maximum="100"
+                        Value="{Binding StereoMasterVolume, Mode=TwoWay}"
+                        StepFrequency="1"
+                        IsEnabled="{Binding CanAdjustStereoMasterVolume}"
+                        AutomationProperties.Name="{Binding StereoMasterVolumeAutomationName}" />
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer Grid.Row="3"
                       Padding="12,0,12,12"
                       HorizontalScrollMode="Disabled"
                       HorizontalScrollBarVisibility="Disabled"
@@ -120,16 +148,35 @@
                                         MinHeight="52"
                                         CornerRadius="{ThemeResource OverlayCornerRadius}"
                                         Background="{ThemeResource SubtleSurfaceBrush}">
-                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                              IsEnabled="{Binding IsSelectionEnabled}"
-                                              MinHeight="44"
-                                              HorizontalAlignment="Stretch"
-                                              HorizontalContentAlignment="Stretch"
-                                              AutomationProperties.Name="{Binding FriendlyName}">
-                                        <TextBlock Text="{Binding FriendlyName}"
-                                                   FontWeight="SemiBold"
-                                                   TextTrimming="CharacterEllipsis" />
-                                    </CheckBox>
+                                    <StackPanel Spacing="4">
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                  IsEnabled="{Binding IsSelectionEnabled}"
+                                                  MinHeight="40"
+                                                  HorizontalAlignment="Stretch"
+                                                  HorizontalContentAlignment="Stretch"
+                                                  AutomationProperties.Name="{Binding FriendlyName}">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding FriendlyName}"
+                                                           FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding VolumeText}"
+                                                           FontSize="12"
+                                                           FontWeight="SemiBold" />
+                                            </Grid>
+                                        </CheckBox>
+                                        <Slider Margin="0"
+                                                Minimum="0"
+                                                Maximum="100"
+                                                Value="{Binding Volume, Mode=TwoWay}"
+                                                StepFrequency="1"
+                                                IsEnabled="{Binding CanAdjustVolume}"
+                                                AutomationProperties.Name="{Binding SpeakerVolumeAutomationName}" />
+                                    </StackPanel>
                                 </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -178,17 +225,36 @@
                                                     MinHeight="48"
                                                     CornerRadius="6"
                                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                                                <CheckBox IsChecked="{Binding IsLeftChannel, Mode=TwoWay}"
-                                                          IsEnabled="{Binding IsSelectionEnabled}"
-                                                          MinHeight="40"
-                                                          HorizontalAlignment="Stretch"
-                                                          HorizontalContentAlignment="Stretch"
-                                                          AutomationProperties.Name="{Binding LeftChannelSelectionAutomationName}">
-                                                    <TextBlock Text="{Binding FriendlyName}"
-                                                               FontWeight="SemiBold"
-                                                               TextTrimming="CharacterEllipsis"
-                                                               ToolTipService.ToolTip="{Binding FriendlyName}" />
-                                                </CheckBox>
+                                                <StackPanel Spacing="4">
+                                                    <CheckBox IsChecked="{Binding IsLeftChannel, Mode=TwoWay}"
+                                                              IsEnabled="{Binding IsSelectionEnabled}"
+                                                              MinHeight="40"
+                                                              HorizontalAlignment="Stretch"
+                                                              HorizontalContentAlignment="Stretch"
+                                                              AutomationProperties.Name="{Binding LeftChannelSelectionAutomationName}">
+                                                        <Grid ColumnSpacing="6">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="{Binding FriendlyName}"
+                                                                       FontWeight="SemiBold"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       ToolTipService.ToolTip="{Binding FriendlyName}" />
+                                                            <TextBlock Grid.Column="1"
+                                                                       Text="{Binding VolumeText}"
+                                                                       FontSize="11"
+                                                                       FontWeight="SemiBold" />
+                                                        </Grid>
+                                                    </CheckBox>
+                                                    <Slider Margin="0"
+                                                            Minimum="0"
+                                                            Maximum="100"
+                                                            Value="{Binding Volume, Mode=TwoWay}"
+                                                            StepFrequency="1"
+                                                            IsEnabled="{Binding CanAdjustLeftChannelVolume}"
+                                                            AutomationProperties.Name="{Binding LeftChannelVolumeAutomationName}" />
+                                                </StackPanel>
                                             </Border>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -232,17 +298,36 @@
                                                     MinHeight="48"
                                                     CornerRadius="6"
                                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                                                <CheckBox IsChecked="{Binding IsRightChannel, Mode=TwoWay}"
-                                                          IsEnabled="{Binding IsSelectionEnabled}"
-                                                          MinHeight="40"
-                                                          HorizontalAlignment="Stretch"
-                                                          HorizontalContentAlignment="Stretch"
-                                                          AutomationProperties.Name="{Binding RightChannelSelectionAutomationName}">
-                                                    <TextBlock Text="{Binding FriendlyName}"
-                                                               FontWeight="SemiBold"
-                                                               TextTrimming="CharacterEllipsis"
-                                                               ToolTipService.ToolTip="{Binding FriendlyName}" />
-                                                </CheckBox>
+                                                <StackPanel Spacing="4">
+                                                    <CheckBox IsChecked="{Binding IsRightChannel, Mode=TwoWay}"
+                                                              IsEnabled="{Binding IsSelectionEnabled}"
+                                                              MinHeight="40"
+                                                              HorizontalAlignment="Stretch"
+                                                              HorizontalContentAlignment="Stretch"
+                                                              AutomationProperties.Name="{Binding RightChannelSelectionAutomationName}">
+                                                        <Grid ColumnSpacing="6">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="{Binding FriendlyName}"
+                                                                       FontWeight="SemiBold"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       ToolTipService.ToolTip="{Binding FriendlyName}" />
+                                                            <TextBlock Grid.Column="1"
+                                                                       Text="{Binding VolumeText}"
+                                                                       FontSize="11"
+                                                                       FontWeight="SemiBold" />
+                                                        </Grid>
+                                                    </CheckBox>
+                                                    <Slider Margin="0"
+                                                            Minimum="0"
+                                                            Maximum="100"
+                                                            Value="{Binding Volume, Mode=TwoWay}"
+                                                            StepFrequency="1"
+                                                            IsEnabled="{Binding CanAdjustRightChannelVolume}"
+                                                            AutomationProperties.Name="{Binding RightChannelVolumeAutomationName}" />
+                                                </StackPanel>
                                             </Border>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>

@@ -275,13 +275,16 @@ public sealed class MiPlayWfdSourceRtspSession
         }
 
         var method = message.StartLine.Split(' ', 2)[0];
-        var supported = method.Equals("GET_PARAMETER", StringComparison.Ordinal) ||
+        var supported = method.Equals("OPTIONS", StringComparison.Ordinal) ||
+                        method.Equals("GET_PARAMETER", StringComparison.Ordinal) ||
                         method.Equals("VIDEO_LATENCY", StringComparison.Ordinal) ||
                         (method.Equals("SET_PARAMETER", StringComparison.Ordinal) &&
                          Encoding.ASCII.GetString(message.Body).Contains("wfd_idr_request", StringComparison.Ordinal));
         if (!supported)
         {
-            return Stop("Only captured keepalive, VIDEO_LATENCY, and IDR requests are accepted after RTSP readiness.");
+            return Stop(
+                "Only OPTIONS/GET_PARAMETER keepalive, VIDEO_LATENCY, and IDR requests are " +
+                $"accepted after RTSP readiness; received '{message.StartLine}'.");
         }
 
         if (method.Equals("VIDEO_LATENCY", StringComparison.Ordinal))
@@ -289,6 +292,13 @@ public sealed class MiPlayWfdSourceRtspSession
             return Accept(
                 [],
                 "Observed captured VIDEO_LATENCY telemetry without replying, matching the rooted-phone source trace.");
+        }
+
+        if (method.Equals("OPTIONS", StringComparison.Ordinal))
+        {
+            return Accept(
+                [MiPlayWfdSourceRtspMessages.EncodeOptionsResponse(timestamp, cseq, sessionId)],
+                "Acknowledged a ready-state RTSP OPTIONS keepalive.");
         }
 
         return Accept(

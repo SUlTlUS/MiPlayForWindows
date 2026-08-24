@@ -19,18 +19,32 @@ public sealed class MiPlayMediaStallRecoveryPlanTests
     }
 
     [Fact]
-    public void PreservesOneAacFrameGapWithoutMovingTheTimeline()
+    public void RebasesOneAacFrameAheadWithoutPermanentPerFrameDelay()
     {
         const long frequency = 1_000_000;
+        const long writeCompletedAt = 9_000_000;
+        const long accessUnitsSent = 11_676;
+        var dueAfterAccessUnits = (long)Math.Round(
+            MiPlayWfdStartupPacingPlan.GetDueAfterMilliseconds(accessUnitsSent) *
+            frequency /
+            1_000d);
 
         Assert.Equal(
-            21_333,
-            MiPlayMediaStallRecoveryPlan.PreserveNominalGap(-900_000, frequency));
-        Assert.Equal(
-            21_333,
-            MiPlayMediaStallRecoveryPlan.PreserveNominalGap(5_000, frequency));
-        Assert.Equal(
-            40_000,
-            MiPlayMediaStallRecoveryPlan.PreserveNominalGap(40_000, frequency));
+            writeCompletedAt + 21_333 - dueAfterAccessUnits,
+            MiPlayMediaStallRecoveryPlan.RebaseMediaStartedAt(
+                writeCompletedAt,
+                accessUnitsSent,
+                frequency));
+    }
+
+    [Fact]
+    public void RejectsInvalidRebaseInputs()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MiPlayMediaStallRecoveryPlan.RebaseMediaStartedAt(-1, 1, 1_000_000));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MiPlayMediaStallRecoveryPlan.RebaseMediaStartedAt(1, 0, 1_000_000));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MiPlayMediaStallRecoveryPlan.RebaseMediaStartedAt(1, 1, 0));
     }
 }
