@@ -13,11 +13,23 @@ public sealed class MiPlaySharedAudioSessionTests
         await using var third = new PcmFrameBuffer();
         var frame = Enumerable.Repeat((byte)0x5A, PcmFrameBuffer.BytesPerFrame).ToArray();
 
-        MiPlaySharedAudioSession.FanOutFrame(frame, [first, second, third]);
+        MiPlaySharedAudioSession.FanOutFrame(
+            new PcmFrameRead(
+                frame,
+                1_234_567,
+                ReanchorPresentationTimeline: true),
+            [first, second, third]);
 
-        Assert.Equal(frame, await first.ReadFrameOrSilenceAsync(CancellationToken.None));
-        Assert.Equal(frame, await second.ReadFrameOrSilenceAsync(CancellationToken.None));
-        Assert.Equal(frame, await third.ReadFrameOrSilenceAsync(CancellationToken.None));
+        var firstRead = await first.ReadFrameWithTimingOrSilenceAsync(CancellationToken.None);
+        Assert.Equal(frame, firstRead.Bytes);
+        Assert.Equal(1_234_567UL, firstRead.PresentationTimeMicroseconds);
+        Assert.True(firstRead.ReanchorPresentationTimeline);
+        var secondRead = await second.ReadFrameWithTimingOrSilenceAsync(CancellationToken.None);
+        var thirdRead = await third.ReadFrameWithTimingOrSilenceAsync(CancellationToken.None);
+        Assert.Equal(frame, secondRead.Bytes);
+        Assert.Equal(frame, thirdRead.Bytes);
+        Assert.True(secondRead.ReanchorPresentationTimeline);
+        Assert.True(thirdRead.ReanchorPresentationTimeline);
     }
 
     [Fact]
@@ -27,7 +39,9 @@ public sealed class MiPlaySharedAudioSessionTests
         await using var second = new PcmFrameBuffer();
         var frame = Enumerable.Repeat((byte)0x33, PcmFrameBuffer.BytesPerFrame).ToArray();
 
-        MiPlaySharedAudioSession.FanOutFrame(frame, [first, second]);
+        MiPlaySharedAudioSession.FanOutFrame(
+            new PcmFrameRead(frame, 1_234_567),
+            [first, second]);
         var firstFrame = await first.ReadFrameOrSilenceAsync(CancellationToken.None);
         firstFrame[0] = 0;
 
@@ -50,7 +64,7 @@ public sealed class MiPlaySharedAudioSessionTests
         }
 
         MiPlaySharedAudioSession.FanOutFrame(
-            input,
+            new PcmFrameRead(input, 1_234_567),
             [leftFirst, leftSecond, rightFirst, rightSecond]);
 
         foreach (var buffer in new[] { leftFirst, leftSecond })
@@ -65,5 +79,34 @@ public sealed class MiPlaySharedAudioSessionTests
             Assert.Equal((short)-2300, BitConverter.ToInt16(frame, 0));
             Assert.Equal((short)-2300, BitConverter.ToInt16(frame, 2));
         }
+    }
+
+    [Fact]
+    public async Task FanOutPreservingSequenceKeepsAnUnderrunSilenceFrameInEveryRoute()
+    {
+        await using var left = new PcmFrameBuffer(
+            AudioChannelRoute.LeftAsMono,
+            PcmFrameFormat.MiPlayAac);
+        await using var right = new PcmFrameBuffer(
+            AudioChannelRoute.RightAsMono,
+            PcmFrameFormat.MiPlayAac);
+        var silence = new byte[PcmFrameFormat.MiPlayAac.BytesPerFrame];
+
+        await MiPlaySharedAudioSession.FanOutFramePreservingSequenceAsync(
+            new PcmFrameRead(
+                silence,
+                1_234_567,
+                IsBufferUnderrunSilence: true),
+            [left, right],
+            CancellationToken.None);
+
+        var leftRead = await left.ReadFrameWithTimingOrSilenceAsync(CancellationToken.None);
+        var rightRead = await right.ReadFrameWithTimingOrSilenceAsync(CancellationToken.None);
+        Assert.Equal(silence, leftRead.Bytes);
+        Assert.Equal(silence, rightRead.Bytes);
+        Assert.Equal(1_234_567UL, leftRead.PresentationTimeMicroseconds);
+        Assert.Equal(1_234_567UL, rightRead.PresentationTimeMicroseconds);
+        Assert.Equal(0, left.Underruns);
+        Assert.Equal(0, right.Underruns);
     }
 }

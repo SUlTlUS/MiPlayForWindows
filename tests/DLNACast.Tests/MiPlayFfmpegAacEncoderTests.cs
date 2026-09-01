@@ -9,8 +9,12 @@ public sealed class MiPlayFfmpegAacEncoderTests
     {
         var arguments = MiPlayFfmpegAacEncoder.CreateArgumentList();
 
-        Assert.Equal(30, arguments.Count);
-        ContainsInOrder(arguments, "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0");
+        Assert.Equal(32, arguments.Count);
+        ContainsInOrder(
+            arguments,
+            "-probesize",
+            MiPlayFfmpegAacEncoder.InputProbeSizeBytes.ToString(),
+            "-f", "s16le", "-ar", "48000", "-ac", "2", "-i", "pipe:0");
         ContainsInOrder(arguments, "-c:a", "aac", "-profile:a", "aac_low");
         ContainsInOrder(arguments, "-ar", "48000", "-ac", "2", "-b:a", "128000");
         ContainsInOrder(arguments, "-f", "adts", "-flush_packets", "1", "pipe:1");

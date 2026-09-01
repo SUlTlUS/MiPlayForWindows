@@ -18,6 +18,11 @@ public sealed class UiText
     public string DlnaDescription => SystemLanguage.Select("兼容多数网络音箱", "Compatible with most network speakers");
     public string MiPlay => SystemLanguage.Select("小米妙播", "MiPlay");
     public string MiPlayDescription => SystemLanguage.Select("适配小米音箱", "Low-latency AAC audio");
+    public string MiPlayTimeOffset => SystemLanguage.Select("TIME_OFFSET 播放预留", "TIME_OFFSET playback lead");
+    public string MiPlayTimeOffsetUnit => SystemLanguage.Select("毫秒", "ms");
+    public string MiPlayTimeOffsetHint => SystemLanguage.Select(
+        "允许设为 0；建议 800–1000 毫秒。低于 600 毫秒可能无声或不同步，重新投送后生效。",
+        "Zero is allowed; 800–1000 ms is recommended. Values below 600 ms may cause silence or desynchronization. Applies to the next cast.");
     public string AudioSource => SystemLanguage.Select("音频来源", "Audio source");
     public string AudioSourceHint => SystemLanguage.Select("选择整个输出设备或单个应用", "Choose an entire output device or a single app");
     public string AllOutputAudio => SystemLanguage.Select("输出设备全部声音", "All output device audio");

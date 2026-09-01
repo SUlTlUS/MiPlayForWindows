@@ -9,9 +9,12 @@ namespace DLNACast.Core.MiPlay;
 /// </summary>
 internal sealed class MiPlayOrderedAccessUnitBuffer
 {
-    public const int DefaultCapacity = 16;
+    // Retain enough completed AAC output to smooth Media Foundation's bursty
+    // delivery. Encoder input has its own smaller bound; coupling the two
+    // capacities unnecessarily keeps old PCM in flight after RTSP startup.
+    public const int DefaultCapacity = 12;
 
-    private readonly Channel<byte[]> channel;
+    private readonly Channel<MiPlayEncodedAccessUnit> channel;
     private long starvationCount;
 
     public MiPlayOrderedAccessUnitBuffer(int capacity = DefaultCapacity)
@@ -21,7 +24,7 @@ internal sealed class MiPlayOrderedAccessUnitBuffer
             throw new ArgumentOutOfRangeException(nameof(capacity));
         }
 
-        channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(capacity)
+        channel = Channel.CreateBounded<MiPlayEncodedAccessUnit>(new BoundedChannelOptions(capacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
@@ -35,18 +38,19 @@ internal sealed class MiPlayOrderedAccessUnitBuffer
     public long StarvationCount => Interlocked.Read(ref starvationCount);
 
     public ValueTask WriteAsync(
-        byte[] accessUnit,
+        MiPlayEncodedAccessUnit accessUnit,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(accessUnit);
-        if (accessUnit.Length == 0)
+        ArgumentNullException.ThrowIfNull(accessUnit.Bytes);
+        if (accessUnit.Bytes.Length == 0)
         {
             throw new ArgumentException("An AAC access unit cannot be empty.", nameof(accessUnit));
         }
         return channel.Writer.WriteAsync(accessUnit, cancellationToken);
     }
 
-    public async ValueTask<byte[]> ReadAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<MiPlayEncodedAccessUnit> ReadAsync(
+        CancellationToken cancellationToken = default)
     {
         if (channel.Reader.TryRead(out var buffered))
         {
@@ -74,3 +78,12 @@ internal sealed class MiPlayOrderedAccessUnitBuffer
     public void Complete(Exception? exception = null) =>
         channel.Writer.TryComplete(exception);
 }
+
+internal readonly record struct MiPlayEncodedAccessUnit(
+    byte[] Bytes,
+    ulong PresentationTimeMicroseconds,
+    bool ReanchorPresentationTimeline = false);
+
+internal readonly record struct MiPlayEncoderInputTiming(
+    ulong PresentationTimeMicroseconds,
+    bool ReanchorPresentationTimeline);

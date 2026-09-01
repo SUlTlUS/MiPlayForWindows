@@ -28,6 +28,8 @@ public sealed class MiPlaySystemAudioTransmitter : IAsyncDisposable
     public bool IsActive => diagnostics.State is not (MiPlayCastState.Idle or MiPlayCastState.Error);
     public int? ReceiverVolume =>
         (runner as IMiPlayReceiverVolumeController)?.ReceiverVolume;
+    public bool ReceiverPaused =>
+        (runner as IMiPlayPlaybackController)?.ReceiverPaused ?? false;
     public event EventHandler<MiPlayCastDiagnostics>? DiagnosticsChanged;
     public event EventHandler<MiPlayReceiverVolumeChangedEventArgs>? ReceiverVolumeChanged;
 
@@ -71,6 +73,8 @@ public sealed class MiPlaySystemAudioTransmitter : IAsyncDisposable
     public async Task StopAsync()
     {
         Task? activeTask;
+        CancellationTokenSource? activeLifetime;
+        IMiPlayPlaybackController? playbackController;
         await gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -94,13 +98,29 @@ public sealed class MiPlaySystemAudioTransmitter : IAsyncDisposable
                 State = MiPlayCastState.Stopping,
                 Message = SystemLanguage.Select("正在停止 MiPlay…", "Stopping MiPlay…")
             });
-            lifetime?.Cancel();
             activeTask = sessionTask;
+            activeLifetime = lifetime;
+            playbackController = runner as IMiPlayPlaybackController;
         }
         finally
         {
             gate.Release();
         }
+
+        if (playbackController is not null)
+        {
+            using var closeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            try
+            {
+                await playbackController.CloseAsync(closeTimeout.Token).ConfigureAwait(false);
+            }
+            catch
+            {
+                // A failed receiver may already have closed its command socket.
+                // Local cancellation below still releases all owned endpoints.
+            }
+        }
+        activeLifetime?.Cancel();
 
         try
         {
@@ -109,6 +129,52 @@ public sealed class MiPlaySystemAudioTransmitter : IAsyncDisposable
         catch (OperationCanceledException)
         {
         }
+    }
+
+    public Task PauseAsync(CancellationToken cancellationToken = default) =>
+        ExecutePlaybackControlAsync(
+            static (controller, token) => controller.PauseAsync(token),
+            cancellationToken);
+
+    public Task ResumeAsync(CancellationToken cancellationToken = default) =>
+        ExecutePlaybackControlAsync(
+            static (controller, token) => controller.ResumeAsync(token),
+            cancellationToken);
+
+    public Task PauseReceiverAsync(CancellationToken cancellationToken = default) =>
+        ExecutePlaybackControlAsync(
+            static (controller, token) => controller.PauseReceiverAsync(token),
+            cancellationToken);
+
+    public Task ResumeReceiverAsync(CancellationToken cancellationToken = default) =>
+        ExecutePlaybackControlAsync(
+            static (controller, token) => controller.ResumeReceiverAsync(token),
+            cancellationToken);
+
+    private async Task ExecutePlaybackControlAsync(
+        Func<IMiPlayPlaybackController, CancellationToken, Task> execute,
+        CancellationToken cancellationToken)
+    {
+        IMiPlayPlaybackController controller;
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (diagnostics.State != MiPlayCastState.Streaming)
+            {
+                throw new InvalidOperationException(SystemLanguage.Select(
+                    "只能在 MiPlay 正在投送时控制播放。",
+                    "Playback can be controlled only while MiPlay is casting."));
+            }
+            controller = runner as IMiPlayPlaybackController ??
+                throw new NotSupportedException(SystemLanguage.Select(
+                    "当前 MiPlay 会话不支持播放控制。",
+                    "The current MiPlay session does not support playback control."));
+        }
+        finally
+        {
+            gate.Release();
+        }
+        await execute(controller, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SetReceiverVolumeAsync(
@@ -173,6 +239,60 @@ public sealed class MiPlaySystemAudioTransmitter : IAsyncDisposable
             .ConfigureAwait(false);
     }
 
+    public async Task<long> StartLatencyProbeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        IMiPlayLatencyProbeController latencyProbeController;
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (diagnostics.State != MiPlayCastState.Streaming)
+            {
+                throw new InvalidOperationException(SystemLanguage.Select(
+                    "只能在 MiPlay 正在投送时测试延迟。",
+                    "Latency can be tested only while MiPlay is casting."));
+            }
+            latencyProbeController = runner as IMiPlayLatencyProbeController ??
+                throw new NotSupportedException(SystemLanguage.Select(
+                    "当前 MiPlay 会话不支持延迟测试。",
+                    "The current MiPlay session does not support latency testing."));
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        return await latencyProbeController.StartLatencyProbeAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task PrepareLatencyProbeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        IMiPlayLatencyProbeController latencyProbeController;
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (diagnostics.State != MiPlayCastState.Streaming)
+            {
+                throw new InvalidOperationException(SystemLanguage.Select(
+                    "只能在 MiPlay 正在投送时准备延迟测试。",
+                    "A latency probe can be prepared only while MiPlay is casting."));
+            }
+            latencyProbeController = runner as IMiPlayLatencyProbeController ??
+                throw new NotSupportedException(SystemLanguage.Select(
+                    "当前 MiPlay 会话不支持延迟测试。",
+                    "The current MiPlay session does not support latency testing."));
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        await latencyProbeController.PrepareLatencyProbeAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     private async Task RunManagedAsync(
         MiPlaySystemAudioRequest request,
         CancellationToken cancellationToken)
@@ -208,7 +328,9 @@ public sealed class MiPlaySystemAudioTransmitter : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            var failureKind = ClassifyFailure(exception);
+            var failureKind = ClassifyFailure(
+                exception,
+                wasStreaming: diagnostics.State == MiPlayCastState.Streaming);
             ready?.TrySetException(exception);
             Update(diagnostics with
             {
@@ -216,14 +338,44 @@ public sealed class MiPlaySystemAudioTransmitter : IAsyncDisposable
                 Message = SystemLanguage.Select("MiPlay 会话失败", "MiPlay session failed"),
                 LastError = failureKind == MiPlayCastFailureKind.ReceiverBusy
                     ? SystemLanguage.Select("音箱被其他设备占用", "The speaker is in use by another device.")
-                    : exception.Message,
+                    : DescribeFailure(exception),
                 FailureKind = failureKind,
             });
         }
     }
 
-    private static MiPlayCastFailureKind ClassifyFailure(Exception exception)
+    internal static string DescribeFailure(Exception exception)
     {
+        ArgumentNullException.ThrowIfNull(exception);
+        var cause = exception.GetBaseException();
+        return ReferenceEquals(cause, exception) || cause.Message == exception.Message
+            ? exception.Message
+            : $"{exception.Message} {SystemLanguage.Select("原因", "Cause")}: {cause.Message}";
+    }
+
+    internal static MiPlayCastFailureKind ClassifyFailure(
+        Exception exception,
+        bool wasStreaming)
+    {
+        if (exception.ToString().Contains(
+                "shared MiPlay audio socket remained blocked",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return MiPlayCastFailureKind.TransportStall;
+        }
+        if (wasStreaming)
+        {
+            for (Exception? current = exception; current is not null; current = current.InnerException)
+            {
+                if (current is TimeoutException or IOException or SocketException)
+                {
+                    // The tablet treats command/media errors after a member is
+                    // already playing as a per-index reconnect. Do not reuse
+                    // the startup-only "receiver busy" interpretation here.
+                    return MiPlayCastFailureKind.TransportStall;
+                }
+            }
+        }
         for (Exception? current = exception; current is not null; current = current.InnerException)
         {
             if (current is SocketException { SocketErrorCode: SocketError.ConnectionAborted })

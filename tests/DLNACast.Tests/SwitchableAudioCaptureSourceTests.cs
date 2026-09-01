@@ -44,6 +44,51 @@ public sealed class SwitchableAudioCaptureSourceTests
         Assert.Contains("dispose:failing", calls);
     }
 
+    [Fact]
+    public async Task ExplicitPauseReleasesCaptureAndResumeRecreatesItBeforeRunning()
+    {
+        var calls = new List<string>();
+        var selection = new CaptureSelection.SystemMix("physical", "Physical output");
+        await using var buffer = new PcmFrameBuffer();
+        await using var capture = new SwitchableAudioCaptureSource(new FakeCatalog(calls), selection);
+
+        await capture.StartAsync(buffer, CancellationToken.None);
+        await capture.PauseAsync();
+
+        Assert.True(capture.IsPaused);
+        Assert.False(capture.IsRunning);
+        Assert.Equal(
+            ["create:physical", "start:physical", "stop:physical", "dispose:physical"],
+            calls);
+
+        await capture.ResumeAsync();
+
+        Assert.False(capture.IsPaused);
+        Assert.True(capture.IsRunning);
+        Assert.Equal(2, calls.Count(call => call == "create:physical"));
+        Assert.Equal(2, calls.Count(call => call == "start:physical"));
+    }
+
+    [Fact]
+    public async Task SelectionChangedWhilePausedIsUsedByResume()
+    {
+        var calls = new List<string>();
+        var original = new CaptureSelection.SystemMix("physical", "Physical output");
+        var replacement = new CaptureSelection.SystemMix("virtual", "Virtual output");
+        await using var buffer = new PcmFrameBuffer();
+        await using var capture = new SwitchableAudioCaptureSource(new FakeCatalog(calls), original);
+
+        await capture.StartAsync(buffer, CancellationToken.None);
+        await capture.PauseAsync();
+        await capture.SwitchAsync(replacement);
+        await capture.ResumeAsync();
+
+        Assert.Equal(replacement, capture.Selection);
+        Assert.True(capture.IsRunning);
+        Assert.Contains("create:virtual", calls);
+        Assert.Contains("start:virtual", calls);
+    }
+
     private sealed class FakeCatalog(List<string> calls, string? failingId = null) : IAudioSourceCatalog
     {
         public IReadOnlyList<AudioSourceItem> GetOutputDevices() => [];

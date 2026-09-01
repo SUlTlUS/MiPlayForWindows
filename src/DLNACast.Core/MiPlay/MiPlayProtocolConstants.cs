@@ -10,6 +10,7 @@ public static class MiPlayProtocolConstants
     public const int CommandHeaderLength = 9;
     public const ushort OpenDeviceCommand = 0;
     public const ushort CloseDeviceCommand = 0x0002;
+    public const ushort CloseDeviceAcknowledgementCommand = 0x0003;
 
     // Basic playback state commands. The MirrorOS3 command-name table maps
     // 0x0004/0x0006 to Pause/Resume; these are distinct from the later
@@ -98,4 +99,6 @@ public static class MiPlayProtocolConstants
     public const int FiveGigahertzPlaybackDelayMicroseconds = 800_000;
     public const int OtherNetworkPlaybackDelayMicroseconds = 1_000_000;
     public const int SystemAudioPlaybackDelayMicroseconds = 0;
+    public const int MinimumConfigurablePlaybackDelayMicroseconds = 0;
+    public const int MaximumConfigurablePlaybackDelayMicroseconds = 2_000_000;
 }

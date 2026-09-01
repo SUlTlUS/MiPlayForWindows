@@ -20,6 +20,12 @@ public sealed class MiPlaySharedMediaCoordinatorTests
             coordinator.SynchronizeMediaAsync(3, timeOffsets[2], CancellationToken.None));
         Assert.All(mediaStarts, value => Assert.Equal(mediaStarts[0], value));
 
+        var runwayStarts = await Task.WhenAll(
+            coordinator.SynchronizeAccessUnitRunwayAsync(1, CancellationToken.None),
+            coordinator.SynchronizeAccessUnitRunwayAsync(2, CancellationToken.None),
+            coordinator.SynchronizeAccessUnitRunwayAsync(3, CancellationToken.None));
+        Assert.All(runwayStarts, value => Assert.Equal(runwayStarts[0], value));
+
         var accessUnit = new byte[] { 0xff, 0xf9, 0x50, 0x80 };
         var synchronized = await Task.WhenAll(
             coordinator.SynchronizeAccessUnitAsync(1, 0, accessUnit, CancellationToken.None),
@@ -57,6 +63,16 @@ public sealed class MiPlaySharedMediaCoordinatorTests
         var mediaStarts = await Task.WhenAll(firstMediaStart, secondMediaStart);
         Assert.Equal(mediaStarts[0], mediaStarts[1]);
 
+        var firstRunwayStart = coordinator.SynchronizeAccessUnitRunwayAsync(
+            participantId: 1,
+            CancellationToken.None);
+        Assert.False(firstRunwayStart.IsCompleted);
+        var secondRunwayStart = coordinator.SynchronizeAccessUnitRunwayAsync(
+            participantId: 2,
+            CancellationToken.None);
+        var runwayStarts = await Task.WhenAll(firstRunwayStart, secondRunwayStart);
+        Assert.Equal(runwayStarts[0], runwayStarts[1]);
+
         var accessUnit = new byte[] { 0xff, 0xf9, 0x50, 0x80 };
         var follower = coordinator.SynchronizeAccessUnitAsync(
             participantId: 2,
@@ -72,6 +88,56 @@ public sealed class MiPlaySharedMediaCoordinatorTests
         var synchronizedAccessUnits = await Task.WhenAll(leader, follower);
         Assert.Same(accessUnit, synchronizedAccessUnits[0]);
         Assert.Same(accessUnit, synchronizedAccessUnits[1]);
+    }
+
+    [Fact]
+    public async Task MediaIsNotReadyUntilEveryReceiverHasItsStartupRunway()
+    {
+        var coordinator = await CreateReadyCoordinatorAsync();
+        var lateJoinWait = coordinator.WaitUntilMediaReadyAsync(CancellationToken.None);
+        Assert.False(coordinator.IsMediaReady);
+        Assert.False(lateJoinWait.IsCompleted);
+        var first = coordinator.SynchronizeAccessUnitRunwayAsync(1, CancellationToken.None);
+        Assert.False(first.IsCompleted);
+        Assert.False(coordinator.IsMediaReady);
+
+        var second = coordinator.SynchronizeAccessUnitRunwayAsync(2, CancellationToken.None);
+        var starts = await Task.WhenAll(first, second);
+        Assert.Equal(starts[0], starts[1]);
+        await lateJoinWait;
+        Assert.True(coordinator.IsMediaReady);
+    }
+
+    [Fact]
+    public async Task CancelingALateJoinWaitDoesNotFailOriginalStartupParticipants()
+    {
+        var coordinator = await CreateReadyCoordinatorAsync();
+        using var canceledLateJoin = new CancellationTokenSource();
+        var lateJoinWait = coordinator.WaitUntilMediaReadyAsync(canceledLateJoin.Token);
+
+        canceledLateJoin.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lateJoinWait);
+        var starts = await Task.WhenAll(
+            coordinator.SynchronizeAccessUnitRunwayAsync(1, CancellationToken.None),
+            coordinator.SynchronizeAccessUnitRunwayAsync(2, CancellationToken.None));
+        Assert.Equal(starts[0], starts[1]);
+        Assert.True(coordinator.IsMediaReady);
+    }
+
+    [Fact]
+    public async Task FailureBeforeTheSecondRunwayReleasesTheWaitingReceiver()
+    {
+        var coordinator = await CreateReadyCoordinatorAsync();
+        var waiting = coordinator.SynchronizeAccessUnitRunwayAsync(1, CancellationToken.None);
+        var failure = new OperationCanceledException("Receiver left while preparing AAC.");
+
+        coordinator.Fail(failure);
+
+        var observed = await Assert.ThrowsAsync<OperationCanceledException>(
+            () => waiting.WaitAsync(TimeSpan.FromSeconds(1)));
+        Assert.Same(failure, observed);
+        Assert.False(coordinator.IsMediaReady);
     }
 
     [Fact]

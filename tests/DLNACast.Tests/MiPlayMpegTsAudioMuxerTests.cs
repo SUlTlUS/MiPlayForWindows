@@ -4,6 +4,45 @@ namespace DLNACast.Tests;
 
 public sealed class MiPlayMpegTsAudioMuxerTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(255)]
+    [InlineData(256)]
+    [InlineData(297)]
+    [InlineData(299)]
+    public void WritesAllNineExtensionBitsAndPreservesReservedBits(ushort extension)
+    {
+        var accessUnit = MiPlayAdtsHeader.Prepend(new byte[682]);
+        var muxed = new MiPlayMpegTsAudioMuxer(1, 1, 0).MuxAdtsAccessUnit(
+            accessUnit, 12_345, 8_589_934_591, extension);
+        var legacy = new MiPlayMpegTsAudioMuxer(1, 1, 0).MuxAdtsAccessUnit(
+            accessUnit, 12_345, 8_589_934_591);
+        var pcr = muxed.TransportStream.AsSpan(2 * 188 + 6, 6);
+
+        Assert.Equal(extension, muxed.ProgramClockReferenceExtension);
+        Assert.Equal(extension, ((pcr[4] & 1) << 8) | pcr[5]);
+        Assert.Equal(0x7e, pcr[4] & 0x7e);
+        Assert.Equal(Convert.FromHexString("FFFFFFFF"), pcr[..4].ToArray());
+        Assert.Equal(0x80, pcr[4] & 0x80);
+        var withoutFraction = muxed.TransportStream.ToArray();
+        withoutFraction[2 * 188 + 10] &= 0xfe;
+        withoutFraction[2 * 188 + 11] = 0;
+        Assert.Equal(legacy.TransportStream, withoutFraction);
+    }
+
+    [Fact]
+    public void RejectsInvalidOrBaselessExtensionBeforeAdvancingContinuityCounters()
+    {
+        var source = MiPlayAdtsHeader.Prepend(new byte[682]);
+        var muxer = new MiPlayMpegTsAudioMuxer(1, 1, 0);
+        Assert.Throws<ArgumentOutOfRangeException>(() => muxer.MuxAdtsAccessUnit(source, 0, 1, 300));
+        Assert.Throws<ArgumentException>(() => muxer.MuxAdtsAccessUnit(source, 0, null, 1));
+        var afterInvalid = muxer.MuxAdtsAccessUnit(source, 0, 1, 297);
+        var fresh = new MiPlayMpegTsAudioMuxer(1, 1, 0).MuxAdtsAccessUnit(source, 0, 1, 297);
+        Assert.Equal(fresh.TransportStream, afterInvalid.TransportStream);
+    }
+
     [Fact]
     public void PinsAdtsCapacityWithAndWithoutProgramTables()
     {

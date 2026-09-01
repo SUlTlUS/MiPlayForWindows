@@ -160,14 +160,25 @@ public static class MiPlayWfdSourceRtspMessages
 
     public static byte[] EncodeTimeOffset(
         DateTimeOffset timestamp,
-        ulong monotonicMicroseconds)
+        ulong monotonicMicroseconds) =>
+        EncodeTimeOffset(timestamp, monotonicMicroseconds, cseq: 5);
+
+    public static byte[] EncodeTimeOffset(
+        DateTimeOffset timestamp,
+        ulong monotonicMicroseconds,
+        int cseq)
     {
+        if (cseq < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cseq));
+        }
+
         return MiPlayRtspWireMessageCodec.Encode(
             $"TIME_OFFSET {WfdTarget} RTSP/1.0",
             [
                 Header("Date", FormatDate(timestamp)),
                 Header("Server", ""),
-                Header("CSeq", "5"),
+                Header("CSeq", cseq.ToString(CultureInfo.InvariantCulture)),
                 Header("Content-Type", "text/parameters"),
                 new MiPlayRtspWireHeader(
                     "TimeOffset",

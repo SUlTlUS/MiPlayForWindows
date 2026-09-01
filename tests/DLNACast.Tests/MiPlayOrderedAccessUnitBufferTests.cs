@@ -9,7 +9,9 @@ public sealed class MiPlayOrderedAccessUnitBufferTests
     {
         var buffer = new MiPlayOrderedAccessUnitBuffer(capacity: 4);
         var units = Enumerable.Range(1, 4)
-            .Select(value => new byte[] { (byte)value })
+            .Select(value => new MiPlayEncodedAccessUnit(
+                new byte[] { (byte)value },
+                (ulong)value * 1_000))
             .ToArray();
 
         foreach (var unit in units)
@@ -19,7 +21,7 @@ public sealed class MiPlayOrderedAccessUnitBufferTests
 
         foreach (var unit in units)
         {
-            Assert.Same(unit, await buffer.ReadAsync());
+            Assert.Equal(unit, await buffer.ReadAsync());
         }
         Assert.Equal(0, buffer.StarvationCount);
     }
@@ -28,19 +30,19 @@ public sealed class MiPlayOrderedAccessUnitBufferTests
     public async Task FullBufferBackpressuresInsteadOfDroppingStartupAudio()
     {
         var buffer = new MiPlayOrderedAccessUnitBuffer(capacity: 2);
-        var first = new byte[] { 1 };
-        var second = new byte[] { 2 };
-        var third = new byte[] { 3 };
+        var first = new MiPlayEncodedAccessUnit(new byte[] { 1 }, 1_000);
+        var second = new MiPlayEncodedAccessUnit(new byte[] { 2 }, 2_000);
+        var third = new MiPlayEncodedAccessUnit(new byte[] { 3 }, 3_000);
 
         await buffer.WriteAsync(first);
         await buffer.WriteAsync(second);
         var blockedWrite = buffer.WriteAsync(third).AsTask();
         Assert.False(blockedWrite.IsCompleted);
 
-        Assert.Same(first, await buffer.ReadAsync());
+        Assert.Equal(first, await buffer.ReadAsync());
         await blockedWrite;
-        Assert.Same(second, await buffer.ReadAsync());
-        Assert.Same(third, await buffer.ReadAsync());
+        Assert.Equal(second, await buffer.ReadAsync());
+        Assert.Equal(third, await buffer.ReadAsync());
     }
 
     [Fact]

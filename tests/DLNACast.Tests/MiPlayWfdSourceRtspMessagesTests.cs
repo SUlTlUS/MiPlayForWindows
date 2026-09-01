@@ -86,5 +86,22 @@ public sealed class MiPlayWfdSourceRtspMessagesTests
         Assert.Equal(coalesced.Length, firstConsumed + secondConsumed);
     }
 
+    [Fact]
+    public void RuntimeTimeOffsetUsesTheRequestedSourceSequence()
+    {
+        var bytes = MiPlayWfdSourceRtspMessages.EncodeTimeOffset(
+            CapturedSecond44,
+            monotonicMicroseconds: 9_700_000_000,
+            cseq: 17);
+
+        Assert.True(MiPlayRtspWireMessageCodec.TryDecode(bytes, out var message, out var consumed));
+        Assert.NotNull(message);
+        Assert.Equal(bytes.Length, consumed);
+        Assert.Equal("TIME_OFFSET rtsp://localhost/wfd1.0 RTSP/1.0", message.StartLine);
+        Assert.Equal("17", message.GetHeader("CSeq"));
+        Assert.Equal("9700000000", message.GetHeader("TimeOffset"));
+        Assert.Empty(message.Body);
+    }
+
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
 }

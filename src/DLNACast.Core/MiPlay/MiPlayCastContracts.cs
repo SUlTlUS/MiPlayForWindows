@@ -20,6 +20,7 @@ public enum MiPlayCastFailureKind
 {
     None,
     ReceiverBusy,
+    TransportStall,
 }
 
 public sealed record MiPlayCastDiagnostics(
@@ -39,8 +40,16 @@ public sealed record MiPlayCastDiagnostics(
     long CatchUpMediaSends = 0,
     MiPlayCastFailureKind FailureKind = MiPlayCastFailureKind.None,
     long MediaTimelineRebases = 0,
+    double MaximumInterReceiverSendSkewMilliseconds = 0,
     int BufferedAccessUnits = 0,
-    long AccessUnitBufferStarvations = 0);
+    long AccessUnitBufferStarvations = 0,
+    int? ReceiverReportedLatencyMilliseconds = null,
+    long? ReceiverReportedRtpPacketCount = null,
+    int? ReceiverReportedBitrate = null,
+    double MinimumEncodedAccessUnitAgeMilliseconds = 0,
+    double MaximumEncodedAccessUnitAgeMilliseconds = 0,
+    bool? ReceiverPaused = null,
+    bool? ContainsAudiblePcm = null);
 
 public sealed record MiPlaySystemAudioRequest(
     RendererDevice Renderer,
@@ -48,7 +57,8 @@ public sealed record MiPlaySystemAudioRequest(
     string FfmpegPath,
     AudioChannelRoute ChannelRoute = AudioChannelRoute.Stereo,
     MiPlayPairSynchronization? PairSynchronization = null,
-    MiPlaySharedAudioSession? SharedAudioSession = null)
+    MiPlaySharedAudioSession? SharedAudioSession = null,
+    int PlaybackDelayMicroseconds = MiPlayProtocolConstants.OtherNetworkPlaybackDelayMicroseconds)
 {
     public void Validate()
     {
@@ -64,6 +74,11 @@ public sealed record MiPlaySystemAudioRequest(
             throw new ArgumentException(
                 "Shared MiPlay capture already coordinates pair startup.",
                 nameof(PairSynchronization));
+        }
+        if (PlaybackDelayMicroseconds is < MiPlayProtocolConstants.MinimumConfigurablePlaybackDelayMicroseconds or
+            > MiPlayProtocolConstants.MaximumConfigurablePlaybackDelayMicroseconds)
+        {
+            throw new ArgumentOutOfRangeException(nameof(PlaybackDelayMicroseconds));
         }
         if (Renderer.Address.AddressFamily != AddressFamily.InterNetwork ||
             IPAddress.Any.Equals(Renderer.Address) ||
@@ -98,6 +113,19 @@ public interface IMiPlayAudioCaptureController
         CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Optional active-session control surface for inserting the acoustic latency
+/// probe without changing the capture source or reconnecting the receiver.
+/// </summary>
+public interface IMiPlayLatencyProbeController
+{
+    Task PrepareLatencyProbeAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<long> StartLatencyProbeAsync(
+        CancellationToken cancellationToken = default);
+}
+
 public sealed class MiPlayReceiverVolumeChangedEventArgs(int volume) : EventArgs
 {
     public int Volume { get; } = volume is >= 0 and <= 100
@@ -115,4 +143,22 @@ public interface IMiPlayReceiverVolumeController
     event EventHandler<MiPlayReceiverVolumeChangedEventArgs>? ReceiverVolumeChanged;
 
     Task SetReceiverVolumeAsync(int volume, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Active receiver control plane. Open is owned by session startup; these
+/// operations serialize Pause, Resume/time-offset recovery, and Close onto the
+/// same command connection without interrupting sibling receivers.
+/// </summary>
+public interface IMiPlayPlaybackController
+{
+    bool ReceiverPaused { get; }
+
+    Task PauseAsync(CancellationToken cancellationToken = default);
+    Task ResumeAsync(CancellationToken cancellationToken = default);
+    Task PauseReceiverAsync(CancellationToken cancellationToken = default) =>
+        PauseAsync(cancellationToken);
+    Task ResumeReceiverAsync(CancellationToken cancellationToken = default) =>
+        ResumeAsync(cancellationToken);
+    Task CloseAsync(CancellationToken cancellationToken = default);
 }

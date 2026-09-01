@@ -27,31 +27,44 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private readonly Func<MiPlaySystemAudioTransmitter> _miPlayTransmitterFactory;
     private readonly ILocalOutputManager _localOutputs;
     private readonly IRendererController _controller;
+    private readonly IAcousticLatencyTester _acousticLatencyTester;
     private readonly AppSettingsStore _settingsStore;
     private readonly AppLogger _logger;
     private readonly DispatcherQueue _dispatcher;
     private readonly NetworkProfileService _networkProfiles = new();
     private readonly SemaphoreSlim _discoveryGate = new(1, 1);
     private readonly SemaphoreSlim _selectionGate = new(1, 1);
+    private readonly SemaphoreSlim _settingsSaveGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly DispatcherQueueTimer _castDurationTimer;
     private readonly Stopwatch _castDurationStopwatch = new();
     private readonly Lock _sessionGate = new();
     private readonly Dictionary<string, DlnaSessionHandle> _dlnaSessions = [];
     private readonly Dictionary<string, MiPlaySessionHandle> _miPlaySessions = [];
+    private readonly HashSet<string> _recoveringMiPlayMembers = [];
+    private readonly Dictionary<string, PendingMiPlayRejoin> _pendingMiPlayRejoins = [];
+    private MiPlaySharedAudioSession? _activeMiPlaySharedSession;
+    private CaptureSelection? _activeMiPlayGroupSelection;
+    private string? _activeMiPlayGroupFfmpegPath;
     private AudioSourceItem? _selectedSource;
     private bool _isProcessMode;
     private bool _isMiPlayMode;
     private bool _isStereoSplitMode;
     private bool _isSpeakerOnlyPlayback = true;
+    private double _miPlayTimeOffsetMilliseconds = 1_000;
     private bool _isBusy;
     private bool _isPrivateNetwork;
     private string _networkSummary = SystemLanguage.Select("正在检查网络…", "Checking the network…");
     private string _statusText = SystemLanguage.Select("正在初始化…", "Initializing…");
     private string _profileText = "DLNA";
     private string _castDurationText = "00:00";
+    private string _speakerPlaybackStatusText = string.Empty;
     private string _diagnosticsText = string.Empty;
     private string _errorText = string.Empty;
+    private string _latencyTestText = SystemLanguage.Select("测试延迟", "Test latency");
+    private string _latencyTestToolTip = SystemLanguage.Select(
+        "播放短测试音，并用电脑默认麦克风测量返回时间",
+        "Play a short probe and measure its return through the default PC microphone");
     private AppSettings _settings = new();
     private Task? _periodicRefresh;
     private DateTimeOffset _nextDiagnosticsLogAt;
@@ -60,6 +73,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private double _stereoMasterVolume = 30;
     private int _stereoSelectionRevision;
     private bool _isInitialized;
+    private bool _isLatencyTesting;
+    private bool _isMiPlayPlaybackControlBusy;
+    private CancellationTokenSource? _latencyTestCancellation;
 
     public MainViewModel(
         IAudioSourceCatalog audioCatalog,
@@ -70,7 +86,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         IRendererController controller,
         AppSettingsStore settingsStore,
         AppLogger logger,
-        DispatcherQueue dispatcher)
+        DispatcherQueue dispatcher,
+        IAcousticLatencyTester? acousticLatencyTester = null)
     {
         _audioCatalog = audioCatalog;
         _discovery = discovery;
@@ -78,6 +95,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _miPlayTransmitterFactory = miPlayTransmitterFactory;
         _localOutputs = localOutputs;
         _controller = controller;
+        _acousticLatencyTester = acousticLatencyTester ?? new WindowsAcousticLatencyTester();
         _settingsStore = settingsStore;
         _logger = logger;
         _dispatcher = dispatcher;
@@ -90,6 +108,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         RefreshSourcesCommand = new RelayCommand(RefreshSources, () => !IsBusy);
         RefreshNetworkCommand = new RelayCommand(RefreshNetworkStatus);
         OpenNetworkSettingsCommand = new RelayCommand(OpenNetworkSettings);
+        TestLatencyCommand = new AsyncRelayCommand(RunLatencyTestAsync, () => CanTestLatency);
+        ToggleMiPlayPlaybackCommand = new AsyncRelayCommand(
+            ToggleMiPlayPlaybackAsync,
+            CanToggleMiPlayPlayback);
     }
 
     public ObservableCollection<RendererItemViewModel> Renderers => _renderers;
@@ -99,6 +121,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public RelayCommand RefreshSourcesCommand { get; }
     public RelayCommand RefreshNetworkCommand { get; }
     public RelayCommand OpenNetworkSettingsCommand { get; }
+    public AsyncRelayCommand TestLatencyCommand { get; }
+    public AsyncRelayCommand ToggleMiPlayPlaybackCommand { get; }
 
     public AudioSourceItem? SelectedSource
     {
@@ -144,6 +168,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             ProfileText = SelectedTransportProfileText;
             OnPropertyChanged(nameof(CanUseProcessCapture));
             OnPropertyChanged(nameof(CanUseStereoSplit));
+            OnPropertyChanged(nameof(MiPlayTimeOffsetVisibility));
+            OnPropertyChanged(nameof(MiPlayPlaybackControlVisibility));
+            OnPropertyChanged(nameof(CanChangeMiPlayTimeOffset));
+            RaiseMiPlayPlaybackControlStateChanged();
         }
     }
 
@@ -155,8 +183,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool CanUseProcessCapture => !IsBusy;
     public bool CanChangeTransport => !IsCasting;
+    public bool CanChangeMiPlayTimeOffset => IsMiPlayMode && !IsCasting && !IsBusy;
     public bool CanUseSpeakerOnlyPlayback => !IsBusy;
     public bool CanUseStereoSplit => !IsBusy;
+    public Visibility MiPlayTimeOffsetVisibility =>
+        IsMiPlayMode ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility MiPlayPlaybackControlVisibility =>
+        IsMiPlayMode && IsCasting ? Visibility.Visible : Visibility.Collapsed;
     public Visibility AudioSourceSelectorVisibility =>
         IsProcessMode ? Visibility.Visible : Visibility.Collapsed;
     public Visibility NormalRendererListVisibility => IsStereoSplitMode
@@ -172,6 +205,34 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public string StereoMasterVolumeAutomationName => SystemLanguage.Select(
         "总音量",
         "Master volume");
+
+    public double MiPlayTimeOffsetMilliseconds
+    {
+        get => _miPlayTimeOffsetMilliseconds;
+        set
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value) || IsCasting || IsBusy)
+            {
+                OnPropertyChanged();
+                return;
+            }
+
+            var minimumMilliseconds =
+                MiPlayProtocolConstants.MinimumConfigurablePlaybackDelayMicroseconds / 1_000;
+            var maximumMilliseconds =
+                MiPlayProtocolConstants.MaximumConfigurablePlaybackDelayMicroseconds / 1_000;
+            var normalized = Math.Clamp(
+                (int)Math.Round(value, MidpointRounding.AwayFromZero),
+                minimumMilliseconds,
+                maximumMilliseconds);
+            if (Math.Abs(_miPlayTimeOffsetMilliseconds - normalized) < double.Epsilon) return;
+
+            _miPlayTimeOffsetMilliseconds = normalized;
+            OnPropertyChanged();
+            _settings = _settings with { MiPlayTimeOffsetMilliseconds = normalized };
+            if (_isInitialized) _ = SaveMiPlayTimeOffsetAsync(_settings);
+        }
+    }
     public bool CanAdjustStereoMasterVolume
     {
         get
@@ -563,8 +624,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             if (!SetField(ref _isBusy, value)) return;
             RefreshRenderersCommand.RaiseCanExecuteChanged();
             RefreshSourcesCommand.RaiseCanExecuteChanged();
+            TestLatencyCommand.RaiseCanExecuteChanged();
+            ToggleMiPlayPlaybackCommand.RaiseCanExecuteChanged();
             foreach (var renderer in Renderers) renderer.IsSelectionEnabled = !value;
             OnPropertyChanged(nameof(CanUseProcessCapture));
+            OnPropertyChanged(nameof(CanChangeMiPlayTimeOffset));
             OnPropertyChanged(nameof(CanUseSpeakerOnlyPlayback));
             OnPropertyChanged(nameof(CanUseStereoSplit));
         }
@@ -585,10 +649,107 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public string NetworkSummary { get => _networkSummary; private set => SetField(ref _networkSummary, value); }
     public string StatusText { get => _statusText; private set => SetField(ref _statusText, value); }
     public string ProfileText { get => _profileText; private set => SetField(ref _profileText, value); }
+    public bool IsLatencyTesting
+    {
+        get => _isLatencyTesting;
+        private set
+        {
+            if (!SetField(ref _isLatencyTesting, value)) return;
+            OnPropertyChanged(nameof(LatencyTestIconVisibility));
+            OnPropertyChanged(nameof(LatencyTestProgressVisibility));
+            TestLatencyCommand.RaiseCanExecuteChanged();
+        }
+    }
+    public bool CanTestLatency => IsLatencyTestSessionReady && !IsBusy && !IsLatencyTesting;
+
+    private bool IsLatencyTestSessionReady
+    {
+        get
+        {
+            lock (_sessionGate)
+            {
+                var hasActiveSession = false;
+                foreach (var session in _dlnaSessions.Values)
+                {
+                    if (!session.Coordinator.IsCasting) continue;
+                    hasActiveSession = true;
+                    if (session.Coordinator.Diagnostics.State != CastSessionState.Streaming)
+                    {
+                        return false;
+                    }
+                }
+
+                foreach (var session in _miPlaySessions.Values)
+                {
+                    if (!session.Transmitter.IsActive) continue;
+                    hasActiveSession = true;
+                    if (session.Transmitter.Diagnostics.State != MiPlayCastState.Streaming)
+                    {
+                        return false;
+                    }
+                }
+
+                return hasActiveSession;
+            }
+        }
+    }
+    public string LatencyTestText
+    {
+        get => _latencyTestText;
+        private set => SetField(ref _latencyTestText, value);
+    }
+    public string LatencyTestToolTip
+    {
+        get => _latencyTestToolTip;
+        private set => SetField(ref _latencyTestToolTip, value);
+    }
+    public Visibility LatencyTestIconVisibility => IsLatencyTesting
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+    public Visibility LatencyTestProgressVisibility => IsLatencyTesting
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+    public bool IsMiPlayPlaybackControlBusy
+    {
+        get => _isMiPlayPlaybackControlBusy;
+        private set
+        {
+            if (!SetField(ref _isMiPlayPlaybackControlBusy, value)) return;
+            OnPropertyChanged(nameof(MiPlayPlaybackControlIconVisibility));
+            OnPropertyChanged(nameof(MiPlayPlaybackControlProgressVisibility));
+            ToggleMiPlayPlaybackCommand.RaiseCanExecuteChanged();
+        }
+    }
+    public string MiPlayPlaybackControlText => AreMiPlayReceiversPaused
+        ? SystemLanguage.Select("继续", "Resume")
+        : SystemLanguage.Select("暂停", "Pause");
+    public string MiPlayPlaybackControlToolTip => AreMiPlayReceiversPaused
+        ? SystemLanguage.Select(
+            "继续当前 MiPlay 音箱播放",
+            "Resume the current MiPlay speakers")
+        : SystemLanguage.Select(
+            "暂停当前 MiPlay 音箱播放",
+            "Pause the current MiPlay speakers");
+    public string MiPlayPlaybackControlGlyph => AreMiPlayReceiversPaused ? "\uE768" : "\uE769";
+    public Visibility MiPlayPlaybackControlIconVisibility => IsMiPlayPlaybackControlBusy
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+    public Visibility MiPlayPlaybackControlProgressVisibility => IsMiPlayPlaybackControlBusy
+        ? Visibility.Visible
+        : Visibility.Collapsed;
     public string CastDurationText
     {
         get => _castDurationText;
         private set => SetField(ref _castDurationText, value);
+    }
+    public string SpeakerPlaybackStatusText
+    {
+        get => _speakerPlaybackStatusText;
+        private set
+        {
+            if (!SetField(ref _speakerPlaybackStatusText, value)) return;
+            OnPropertyChanged(nameof(SpeakerPlaybackStatusVisibility));
+        }
     }
     private string SelectedTransportProfileText => IsMiPlayMode
         ? SystemLanguage.Select("小米妙播", "MiPlay")
@@ -614,6 +775,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public Visibility DiagnosticsVisibility => string.IsNullOrWhiteSpace(DiagnosticsText)
         ? Visibility.Collapsed
         : Visibility.Visible;
+    public Visibility SpeakerPlaybackStatusVisibility =>
+        string.IsNullOrWhiteSpace(SpeakerPlaybackStatusText)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     public Visibility ErrorVisibility => string.IsNullOrWhiteSpace(ErrorText)
         ? Visibility.Collapsed
         : Visibility.Visible;
@@ -664,7 +829,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         _settings = await _settingsStore.LoadAsync(_lifetime.Token);
         _isSpeakerOnlyPlayback = _settings.SpeakerOnlyPlayback;
+        _miPlayTimeOffsetMilliseconds = Math.Clamp(
+            _settings.MiPlayTimeOffsetMilliseconds,
+            MiPlayProtocolConstants.MinimumConfigurablePlaybackDelayMicroseconds / 1_000,
+            MiPlayProtocolConstants.MaximumConfigurablePlaybackDelayMicroseconds / 1_000);
+        _settings = _settings with
+        {
+            MiPlayTimeOffsetMilliseconds = (int)_miPlayTimeOffsetMilliseconds,
+        };
         OnPropertyChanged(nameof(IsSpeakerOnlyPlayback));
+        OnPropertyChanged(nameof(MiPlayTimeOffsetMilliseconds));
         IsMiPlayMode = string.Equals(_settings.TransportMode, "MiPlay", StringComparison.OrdinalIgnoreCase);
         IsProcessMode = string.Equals(_settings.CaptureMode, "Process", StringComparison.OrdinalIgnoreCase);
         _isInitialized = true;
@@ -844,12 +1018,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             if (revision != Volatile.Read(ref _stereoSelectionRevision) || !IsStereoSplitMode) return;
 
-            if (ActiveSessionCount > 0)
-            {
-                IsBusy = true;
-                await StopActiveSessionsPreservingAssignmentsAsync();
-            }
-
             var leftRenderers = Renderers.Where(renderer => renderer.IsLeftChannel).ToArray();
             var rightRenderers = Renderers.Where(renderer => renderer.IsRightChannel).ToArray();
             if (leftRenderers.Length == 0 || rightRenderers.Length == 0)
@@ -898,19 +1066,44 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 ? new CaptureSelection.Process(SelectedSource.ProcessId!.Value, SelectedSource.DisplayName, true)
                 : new CaptureSelection.SystemMix(SelectedSource.Id, SelectedSource.DisplayName);
             StartResult[] results;
-            if (IsMiPlayMode)
+            var updatedRunningMiPlayGroup = false;
+            MiPlaySharedAudioSession? activeSharedSession;
+            lock (_sessionGate)
             {
+                activeSharedSession = _activeMiPlaySharedSession;
+            }
+            if (IsMiPlayMode && activeSharedSession is not null && ActiveSessionCount > 0)
+            {
+                updatedRunningMiPlayGroup = true;
+                results = await UpdateMiPlayGroupAsync(
+                    activeSharedSession,
+                    targets,
+                    selection);
+            }
+            else if (IsMiPlayMode)
+            {
+                if (ActiveSessionCount > 0)
+                {
+                    await StopActiveSessionsPreservingAssignmentsAsync();
+                }
                 results = await StartMiPlayGroupAsync(targets, selection);
             }
             else
             {
+                if (ActiveSessionCount > 0)
+                {
+                    await StopActiveSessionsPreservingAssignmentsAsync();
+                }
                 results = await Task.WhenAll(targets.Select(target =>
                     StartDlnaTargetAsync(target.Renderer, selection, target.ChannelRoute)));
             }
             var failures = results.Where(result => result.Error is not null).ToArray();
             if (failures.Length > 0)
             {
-                await StopActiveSessionsPreservingAssignmentsAsync();
+                if (!updatedRunningMiPlayGroup)
+                {
+                    await StopActiveSessionsPreservingAssignmentsAsync();
+                }
                 throw new AggregateException(failures.Select(result => result.Error!));
             }
 
@@ -950,6 +1143,131 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
+    private async Task<StartResult[]> UpdateMiPlayGroupAsync(
+        MiPlaySharedAudioSession sharedSession,
+        IReadOnlyList<StereoTarget> targets,
+        CaptureSelection originalSelection)
+    {
+        var targetsByUdn = targets.ToDictionary(target => target.Renderer.Udn);
+        MiPlaySessionHandle[] current;
+        string? ffmpegPath;
+        lock (_sessionGate)
+        {
+            current = [.. _miPlaySessions.Values.Where(session =>
+                ReferenceEquals(session.SharedAudioSession, sharedSession))];
+            _activeMiPlayGroupSelection = originalSelection;
+            ffmpegPath = _activeMiPlayGroupFfmpegPath;
+        }
+
+        if (ffmpegPath is null)
+        {
+            throw new InvalidOperationException(
+                "The active MiPlay group does not have an AAC encoder path.");
+        }
+
+        var results = new List<StartResult>();
+        var currentByUdn = current.ToDictionary(session => session.Renderer.Udn);
+        var pureDepartures = current
+            .Where(session => !targetsByUdn.ContainsKey(session.Renderer.Udn))
+            .ToList();
+
+        async Task RemoveMemberAsync(MiPlaySessionHandle session)
+        {
+            lock (_sessionGate)
+            {
+                if (_miPlaySessions.TryGetValue(session.Renderer.Udn, out var active) &&
+                    ReferenceEquals(active, session))
+                {
+                    _miPlaySessions.Remove(session.Renderer.Udn);
+                }
+            }
+            currentByUdn.Remove(session.Renderer.Udn);
+            pureDepartures.Remove(session);
+            await StopAndDisposeAsync(session).ConfigureAwait(false);
+        }
+
+        async Task<bool> AddMemberAsync(StereoTarget target)
+        {
+            var result = await StartMiPlayTargetAsync(
+                target.Renderer,
+                originalSelection,
+                target.ChannelRoute,
+                sharedAudioSession: sharedSession,
+                originalSelection: originalSelection,
+                ffmpegPath: ffmpegPath,
+                waitUntilReady: true).ConfigureAwait(false);
+            results.Add(result);
+            if (result.Error is not null)
+            {
+                return false;
+            }
+            lock (_sessionGate)
+            {
+                currentByUdn[target.Renderer.Udn] = _miPlaySessions[target.Renderer.Udn];
+                _pendingMiPlayRejoins.Remove(target.Renderer.Udn);
+            }
+            return true;
+        }
+
+        lock (_sessionGate)
+        {
+            foreach (var pendingUdn in _pendingMiPlayRejoins.Keys
+                         .Where(udn => !targetsByUdn.ContainsKey(udn))
+                         .ToArray())
+            {
+                _pendingMiPlayRejoins.Remove(pendingUdn);
+            }
+        }
+
+        // The tablet serializes native addMirror/deleteMirror on one Handler.
+        // Do the same here so each new member receives one explicit future AU
+        // boundary and packetizer snapshot before membership changes again.
+        foreach (var target in targets.Where(target => !currentByUdn.ContainsKey(target.Renderer.Udn)))
+        {
+            if (currentByUdn.Count >= 63)
+            {
+                var slot = pureDepartures.FirstOrDefault() ??
+                    throw new InvalidOperationException(
+                        "The active MiPlay group has no membership slot for a new receiver.");
+                await RemoveMemberAsync(slot).ConfigureAwait(false);
+            }
+            if (!await AddMemberAsync(target).ConfigureAwait(false))
+            {
+                return [.. results];
+            }
+        }
+
+        // Route changes cannot overlap for the same receiver. Remove and add
+        // one member at a time so a two-speaker L/R swap never drops the shared
+        // session to zero subscribers and restarts capture.
+        foreach (var target in targets)
+        {
+            if (!currentByUdn.TryGetValue(target.Renderer.Udn, out var existing) ||
+                existing.ChannelRoute == target.ChannelRoute)
+            {
+                continue;
+            }
+            await RemoveMemberAsync(existing).ConfigureAwait(false);
+            if (!await AddMemberAsync(target).ConfigureAwait(false))
+            {
+                return [.. results];
+            }
+        }
+
+        // Tablet stopSingleMirror removes only the selected native sender when
+        // other members remain. Subscription disposal releases the current
+        // AAC/send barriers without restarting capture or route encoders.
+        foreach (var departed in pureDepartures.ToArray())
+        {
+            await RemoveMemberAsync(departed).ConfigureAwait(false);
+        }
+
+        return results.Count == 0
+            ? targets.Select(target =>
+                new StartResult(target.Renderer.Udn, target.Renderer.FriendlyName, null)).ToArray()
+            : [.. results];
+    }
+
     private async Task<StartResult[]> StartMiPlayGroupAsync(
         IReadOnlyList<StereoTarget> targets,
         CaptureSelection originalSelection)
@@ -976,10 +1294,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 }
             }
 
+            var ffmpegPath = MiPlayFfmpegLocator.RequireExecutable();
             sharedCapture = await MiPlaySharedAudioSession.StartAsync(
                 _audioCatalog,
                 captureSelection,
                 targets.Select(target => target.ChannelRoute).ToArray(),
+                ffmpegPath,
                 _lifetime.Token);
 
             var startTasks = new Task<StartResult>[targets.Count];
@@ -992,6 +1312,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     sharedAudioSession: sharedCapture,
                     preAcquiredLocalOutputLease: localOutputLeases[index],
                     originalSelection: originalSelection,
+                    ffmpegPath: ffmpegPath,
                     waitUntilReady: true);
                 localOutputLeases[index] = null;
             }
@@ -1000,6 +1321,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             if (results.Any(result => result.Error is not null))
             {
                 await sharedCapture.DisposeAsync();
+            }
+            else
+            {
+                lock (_sessionGate)
+                {
+                    _activeMiPlaySharedSession = sharedCapture;
+                    _activeMiPlayGroupSelection = originalSelection;
+                    _activeMiPlayGroupFfmpegPath = ffmpegPath;
+                }
             }
             return results;
         }
@@ -1130,22 +1460,168 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
+    private async Task RunLatencyTestAsync()
+    {
+        if (!CanTestLatency) return;
+
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        cancellation.CancelAfter(TimeSpan.FromSeconds(12));
+        if (Interlocked.CompareExchange(ref _latencyTestCancellation, cancellation, null) is not null)
+        {
+            cancellation.Dispose();
+            return;
+        }
+
+        IsLatencyTesting = true;
+        LatencyTestText = SystemLanguage.Select("测试中…", "Testing…");
+        LatencyTestToolTip = SystemLanguage.Select(
+            "请保持房间安静，等待音箱播放短测试音",
+            "Keep the room quiet and wait for the speaker to play the short probe");
+        ErrorText = string.Empty;
+        try
+        {
+            var measurement = await _acousticLatencyTester.MeasureAsync(
+                EmitLatencyProbeAsync,
+                cancellation.Token);
+            var milliseconds = Math.Max(0, (int)Math.Round(measurement.Latency.TotalMilliseconds));
+            LatencyTestText = SystemLanguage.Select(
+                $"延迟 {milliseconds} ms",
+                $"Latency {milliseconds} ms");
+            LatencyTestToolTip = SystemLanguage.Select(
+                $"电脑默认麦克风检测到测试音，声学延迟约 {milliseconds} 毫秒",
+                $"The default PC microphone detected the probe; acoustic latency is about {milliseconds} ms");
+            _logger.Info(SystemLanguage.Select(
+                $"声学延迟测试完成：{milliseconds} 毫秒，相关度 {measurement.Confidence:F3}，" +
+                $"检测方式={(measurement.UsedWakeToneFallback ? "提示音回退" : "探针相关")}",
+                $"Acoustic latency test completed: {milliseconds} ms, correlation {measurement.Confidence:F3}, " +
+                $"method={(measurement.UsedWakeToneFallback ? "wake fallback" : "probe correlation")}"));
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            if (!_lifetime.IsCancellationRequested && IsCasting)
+            {
+                ErrorText = SystemLanguage.Select(
+                    "延迟测试超时，请确认电脑麦克风可用并调高音箱音量。",
+                    "The latency test timed out. Check the PC microphone and raise the speaker volume.");
+            }
+            ResetLatencyTestDisplay();
+        }
+        catch (Exception exception)
+        {
+            ErrorText = GetLatencyTestError(exception);
+            ResetLatencyTestDisplay();
+            _logger.Error(SystemLanguage.Select(
+                "声学延迟测试失败",
+                "Acoustic latency test failed"), exception);
+        }
+        finally
+        {
+            if (ReferenceEquals(
+                    Interlocked.CompareExchange(ref _latencyTestCancellation, null, cancellation),
+                    cancellation))
+            {
+                cancellation.Dispose();
+            }
+            IsLatencyTesting = false;
+        }
+    }
+
+    private async Task<long> EmitLatencyProbeAsync(CancellationToken cancellationToken)
+    {
+        DlnaSessionHandle[] dlnaSessions;
+        MiPlaySessionHandle[] miPlaySessions;
+        lock (_sessionGate)
+        {
+            dlnaSessions = [.. _dlnaSessions.Values.Where(session =>
+                session.Coordinator.Diagnostics.State == CastSessionState.Streaming)];
+            miPlaySessions = [.. _miPlaySessions.Values.Where(session =>
+                session.Transmitter.Diagnostics.State == MiPlayCastState.Streaming)];
+        }
+
+        if (miPlaySessions.Length > 0)
+        {
+            // A multi-speaker MiPlay group shares its source PCM buffer, so one
+            // scheduled probe reaches every participant at the same media point.
+            // Validate every receiver without rewriting the active media clock.
+            await Task.WhenAll(miPlaySessions.Skip(1).Select(session =>
+                session.Transmitter.PrepareLatencyProbeAsync(cancellationToken)));
+            return await miPlaySessions[0].Transmitter
+                .StartLatencyProbeAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (dlnaSessions.Length > 0)
+        {
+            var starts = await Task.WhenAll(dlnaSessions.Select(session =>
+                session.Coordinator.StartLatencyProbeAsync(cancellationToken)));
+            return starts.Min();
+        }
+
+        throw new InvalidOperationException(SystemLanguage.Select(
+            "没有正在运行的投送会话。",
+            "There is no active cast session."));
+    }
+
+    private static string GetLatencyTestError(Exception exception)
+    {
+        if (exception.Message.Contains("只能在 MiPlay 正在投送时", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("Latency can be tested only while", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("must be active before starting a latency probe", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("没有正在运行的投送会话", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("There is no active cast session", StringComparison.OrdinalIgnoreCase))
+        {
+            return SystemLanguage.Select(
+                "音箱仍在连接或投送已结束，请等待状态显示正在投送后重试。",
+                "The speaker is still connecting or the cast has ended. Wait until the status shows streaming and retry.");
+        }
+        if (exception is TimeoutException)
+        {
+            return SystemLanguage.Select(
+                "未收到麦克风数据，请检查 Windows 麦克风权限和默认输入设备。",
+                "No microphone data was received. Check Windows microphone permission and the default input device.");
+        }
+        if (exception.Message.Contains("did not detect", StringComparison.OrdinalIgnoreCase))
+        {
+            return SystemLanguage.Select(
+                "麦克风未检测到测试音，请保持安静、靠近音箱并调高音量后重试。",
+                "The microphone did not detect the probe. Move closer, keep the room quiet, and raise the volume before retrying.");
+        }
+        return SystemLanguage.Select(
+            "无法使用电脑默认麦克风，请检查麦克风权限和输入设备。",
+            "The default PC microphone is unavailable. Check microphone permission and the input device.");
+    }
+
+    private void ResetLatencyTestDisplay()
+    {
+        LatencyTestText = SystemLanguage.Select("测试延迟", "Test latency");
+        LatencyTestToolTip = SystemLanguage.Select(
+            "播放短测试音，并用电脑默认麦克风测量返回时间",
+            "Play a short probe and measure its return through the default PC microphone");
+    }
+
     public async Task StopCastingAsync()
     {
+        _latencyTestCancellation?.Cancel();
         IsBusy = true;
         try
         {
             DlnaSessionHandle[] dlnaSessions;
             MiPlaySessionHandle[] miPlaySessions;
+            MiPlaySharedAudioSession? sharedSession;
             lock (_sessionGate)
             {
                 dlnaSessions = [.. _dlnaSessions.Values];
                 miPlaySessions = [.. _miPlaySessions.Values];
+                sharedSession = _activeMiPlaySharedSession;
             }
 
             await Task.WhenAll(
                 dlnaSessions.Select(StopAndDisposeAsync)
                     .Concat(miPlaySessions.Select(StopAndDisposeAsync)));
+            if (sharedSession is not null)
+            {
+                await sharedSession.DisposeAsync();
+            }
             StatusText = SystemLanguage.Select("投送已停止", "Casting stopped");
             _logger.Info(SystemLanguage.Select("投送已停止", "Casting stopped"));
         }
@@ -1160,6 +1636,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             {
                 _dlnaSessions.Clear();
                 _miPlaySessions.Clear();
+                _recoveringMiPlayMembers.Clear();
+                _pendingMiPlayRejoins.Clear();
+                _activeMiPlaySharedSession = null;
+                _activeMiPlayGroupSelection = null;
+                _activeMiPlayGroupFfmpegPath = null;
             }
             ClearRendererSelection();
             IsBusy = false;
@@ -1307,17 +1788,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         DlnaSessionHandle[] dlnaSessions;
         MiPlaySessionHandle[] miPlaySessions;
+        MiPlaySharedAudioSession? sharedSession;
         lock (_sessionGate)
         {
             dlnaSessions = [.. _dlnaSessions.Values];
             miPlaySessions = [.. _miPlaySessions.Values];
             _dlnaSessions.Clear();
             _miPlaySessions.Clear();
+            _recoveringMiPlayMembers.Clear();
+            _pendingMiPlayRejoins.Clear();
+            sharedSession = _activeMiPlaySharedSession;
+            _activeMiPlaySharedSession = null;
+            _activeMiPlayGroupSelection = null;
+            _activeMiPlayGroupFfmpegPath = null;
         }
 
         await Task.WhenAll(
             dlnaSessions.Select(StopAndDisposeAsync)
                 .Concat(miPlaySessions.Select(StopAndDisposeAsync)));
+        if (sharedSession is not null)
+        {
+            await sharedSession.DisposeAsync();
+        }
     }
 
     private async Task LoadRendererVolumesAsync(IEnumerable<RendererItemViewModel> renderers)
@@ -1384,6 +1876,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         MiPlaySharedAudioSession? sharedAudioSession = null,
         ILocalOutputLease? preAcquiredLocalOutputLease = null,
         CaptureSelection? originalSelection = null,
+        string? ffmpegPath = null,
         bool waitUntilReady = false)
     {
         var transmitter = _miPlayTransmitterFactory();
@@ -1404,15 +1897,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 transmitter,
                 handler,
                 sessionOriginalSelection,
-                localOutputLease);
+                localOutputLease,
+                channelRoute,
+                sharedAudioSession);
             lock (_sessionGate) _miPlaySessions[renderer.Udn] = handle;
             var request = new MiPlaySystemAudioRequest(
                 renderer.Device,
                 selection,
-                MiPlayFfmpegLocator.RequireExecutable(),
+                ffmpegPath ?? MiPlayFfmpegLocator.RequireExecutable(),
                 channelRoute,
                 pairSynchronization,
-                sharedAudioSession);
+                sharedAudioSession,
+                PlaybackDelayMicroseconds: checked((int)_miPlayTimeOffsetMilliseconds * 1_000));
             if (waitUntilReady)
             {
                 await transmitter.StartAsync(request, _lifetime.Token);
@@ -1700,9 +2196,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyCastStateChanged();
         });
 
-    private void OnMiPlayDiagnosticsChanged(RendererItemViewModel renderer, MiPlayCastDiagnostics diagnostics) =>
+    private void OnMiPlayDiagnosticsChanged(RendererItemViewModel renderer, MiPlayCastDiagnostics diagnostics)
+    {
+        lock (_sessionGate)
+        {
+            if (_miPlaySessions.TryGetValue(renderer.Udn, out var session))
+            {
+                session.Diagnostics = diagnostics;
+            }
+        }
+
         _ = RunOnUiAsync(() =>
         {
+            SpeakerPlaybackStatusText = GetSpeakerPlaybackStatusText();
+            RaiseMiPlayPlaybackControlStateChanged();
             var singleProfile = diagnostics.State == MiPlayCastState.Idle
                 ? SystemLanguage.Select("未连接", "Not connected")
                 : "MiPlay AAC";
@@ -1735,8 +2242,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     $"lateSends={diagnostics.LateMediaSends}, " +
                     $"catchUpSends={diagnostics.CatchUpMediaSends}, " +
                     $"timelineRebases={diagnostics.MediaTimelineRebases}, " +
+                    $"interReceiverSkewMax=" +
+                    $"{diagnostics.MaximumInterReceiverSendSkewMilliseconds:F3}ms, " +
                     $"aacFifo={diagnostics.BufferedAccessUnits}, " +
-                    $"aacStarvations={diagnostics.AccessUnitBufferStarvations}");
+                    $"aacStarvations={diagnostics.AccessUnitBufferStarvations}, " +
+                    $"encodedAgeMin={diagnostics.MinimumEncodedAccessUnitAgeMilliseconds:F3}ms, " +
+                    $"encodedAgeMax={diagnostics.MaximumEncodedAccessUnitAgeMilliseconds:F3}ms, " +
+                    $"receiverLatencyMs={diagnostics.ReceiverReportedLatencyMilliseconds?.ToString() ?? "unknown"}, " +
+                    $"receiverRtpPackets={diagnostics.ReceiverReportedRtpPacketCount?.ToString() ?? "unknown"}, " +
+                    $"receiverBitrate={diagnostics.ReceiverReportedBitrate?.ToString() ?? "unknown"}");
                 _nextDiagnosticsLogAt = DateTimeOffset.UtcNow.AddSeconds(5);
             }
             if (diagnostics.State == MiPlayCastState.Error)
@@ -1749,13 +2263,387 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     ClearRendererAssignment(renderer);
                     _ = CleanupFailedMiPlaySessionAsync(renderer);
                 }
+                else if (diagnostics.FailureKind == MiPlayCastFailureKind.TransportStall)
+                {
+                    _ = RecoverStalledMiPlayMemberAsync(renderer);
+                }
             }
             NotifyCastStateChanged();
         });
+    }
+
+    private string GetSpeakerPlaybackStatusText()
+    {
+        string[] statuses;
+        lock (_sessionGate)
+        {
+            statuses = _miPlaySessions.Values
+                .Where(session => session.Transmitter.IsActive)
+                .OrderBy(session => session.Renderer.FriendlyName, StringComparer.CurrentCultureIgnoreCase)
+                .Select(session =>
+                {
+                    var diagnostics = session.Diagnostics;
+                    var state = diagnostics.State switch
+                    {
+                        MiPlayCastState.Streaming when session.Transmitter.ReceiverPaused =>
+                            SystemLanguage.Select("已暂停", "Paused"),
+                        MiPlayCastState.Streaming =>
+                            SystemLanguage.Select("播放中", "Playing"),
+                        MiPlayCastState.AwaitingReceiver =>
+                            SystemLanguage.Select("等待音箱", "Waiting for speaker"),
+                        MiPlayCastState.Connecting or MiPlayCastState.Bootstrapping =>
+                            SystemLanguage.Select("连接中", "Connecting"),
+                        MiPlayCastState.Stopping =>
+                            SystemLanguage.Select("停止中", "Stopping"),
+                        MiPlayCastState.Error =>
+                            SystemLanguage.Select("错误", "Error"),
+                        _ => SystemLanguage.Select("准备中", "Preparing"),
+                    };
+                    return $"{session.Renderer.FriendlyName} {state}";
+                })
+                .ToArray();
+        }
+
+        if (statuses.Length == 0) return string.Empty;
+        return SystemLanguage.Select("音箱状态：", "Speaker state: ") +
+               string.Join(" · ", statuses);
+    }
+
+    private bool AreMiPlayReceiversPaused
+    {
+        get
+        {
+            MiPlaySessionHandle[] sessions;
+            lock (_sessionGate)
+            {
+                sessions = [.. _miPlaySessions.Values];
+            }
+            var controls = SelectMiPlayPlaybackControls(sessions);
+            return controls.Count > 0 && controls.All(session => session.Transmitter.ReceiverPaused);
+        }
+    }
+
+    private bool CanToggleMiPlayPlayback()
+    {
+        if (!IsMiPlayMode || IsBusy || IsMiPlayPlaybackControlBusy) return false;
+        lock (_sessionGate)
+        {
+            return SelectMiPlayPlaybackControls(_miPlaySessions.Values).Count > 0;
+        }
+    }
+
+    private async Task ToggleMiPlayPlaybackAsync()
+    {
+        MiPlaySessionHandle[] sessions;
+        lock (_sessionGate)
+        {
+            sessions = [.. _miPlaySessions.Values];
+        }
+        var controls = SelectMiPlayPlaybackControls(sessions);
+        if (controls.Count == 0) return;
+
+        var sendResume = controls.All(session => session.Transmitter.ReceiverPaused);
+        IsMiPlayPlaybackControlBusy = true;
+        ErrorText = string.Empty;
+        try
+        {
+            if (sendResume)
+            {
+                await Task.WhenAll(controls.Select(session =>
+                    session.Transmitter.ResumeReceiverAsync(_lifetime.Token))).ConfigureAwait(false);
+            }
+            else
+            {
+                await Task.WhenAll(controls.Select(session =>
+                    session.Transmitter.PauseReceiverAsync(_lifetime.Token))).ConfigureAwait(false);
+            }
+
+            await RunOnUiAsync(() =>
+            {
+                SpeakerPlaybackStatusText = GetSpeakerPlaybackStatusText();
+                StatusText = sendResume
+                    ? SystemLanguage.Select("音箱已继续播放", "Speaker playback resumed")
+                    : SystemLanguage.Select("音箱已暂停", "Speaker playback paused");
+                _logger.Info(SystemLanguage.Select(
+                    $"已手动向 {controls.Count} 个 MiPlay 会话组发送{(sendResume ? "继续" : "暂停")}序列",
+                    $"Manually sent {(sendResume ? "Resume" : "Pause")} to {controls.Count} MiPlay session group(s)"));
+                RaiseMiPlayPlaybackControlStateChanged();
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            await RunOnUiAsync(() =>
+            {
+                ErrorText = exception.Message;
+                _logger.Error(SystemLanguage.Select(
+                    "手动发送 MiPlay 播放控制序列失败",
+                    "Failed to send the MiPlay playback-control sequence"), exception);
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            await RunOnUiAsync(() => IsMiPlayPlaybackControlBusy = false).ConfigureAwait(false);
+        }
+    }
+
+    private void RaiseMiPlayPlaybackControlStateChanged()
+    {
+        OnPropertyChanged(nameof(MiPlayPlaybackControlText));
+        OnPropertyChanged(nameof(MiPlayPlaybackControlToolTip));
+        OnPropertyChanged(nameof(MiPlayPlaybackControlGlyph));
+        ToggleMiPlayPlaybackCommand.RaiseCanExecuteChanged();
+    }
+
+    private static List<MiPlaySessionHandle> SelectMiPlayPlaybackControls(
+        IEnumerable<MiPlaySessionHandle> sessions)
+    {
+        var controls = new List<MiPlaySessionHandle>();
+        var sharedSessions = new HashSet<MiPlaySharedAudioSession>(ReferenceEqualityComparer.Instance);
+        foreach (var session in sessions)
+        {
+            if (session.Transmitter.Diagnostics.State != MiPlayCastState.Streaming) continue;
+            if (session.SharedAudioSession is null || sharedSessions.Add(session.SharedAudioSession))
+            {
+                controls.Add(session);
+            }
+        }
+        return controls;
+    }
+
+    private async Task RecoverStalledMiPlayMemberAsync(RendererItemViewModel renderer)
+    {
+        try
+        {
+            await _selectionGate.WaitAsync(_lifetime.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            return;
+        }
+
+        try
+        {
+            MiPlaySessionHandle? failed;
+            MiPlaySharedAudioSession? sharedSession;
+            CaptureSelection? selection;
+            string? ffmpegPath;
+            lock (_sessionGate)
+            {
+                if (!_recoveringMiPlayMembers.Add(renderer.Udn))
+                {
+                    return;
+                }
+                if (!_miPlaySessions.Remove(renderer.Udn, out failed))
+                {
+                    _recoveringMiPlayMembers.Remove(renderer.Udn);
+                    return;
+                }
+                sharedSession = failed.SharedAudioSession;
+                selection = _activeMiPlayGroupSelection;
+                ffmpegPath = _activeMiPlayGroupFfmpegPath;
+            }
+
+            try
+            {
+                await StopAndDisposeAsync(failed).ConfigureAwait(false);
+                if (sharedSession is null || selection is null || ffmpegPath is null)
+                {
+                    throw new InvalidOperationException(
+                        "The stalled MiPlay receiver is not part of a recoverable shared group.");
+                }
+
+                Exception? lastFailure = null;
+                // Tablet reConnectNum retries the failed native member five
+                // times before deleting it from the still-running group.
+                foreach (var delayMilliseconds in new[] { 500, 1_000, 2_000, 3_000, 5_000 })
+                {
+                    await Task.Delay(delayMilliseconds, _lifetime.Token).ConfigureAwait(false);
+                    if (!IsRendererAssignedToRoute(renderer, failed.ChannelRoute))
+                    {
+                        return;
+                    }
+                    var result = await StartMiPlayTargetAsync(
+                            renderer,
+                            selection,
+                            failed.ChannelRoute,
+                            sharedAudioSession: sharedSession,
+                            originalSelection: selection,
+                            ffmpegPath: ffmpegPath,
+                            waitUntilReady: true)
+                        .ConfigureAwait(false);
+                    if (result.Error is null)
+                    {
+                        _logger.Info(SystemLanguage.Select(
+                            $"{renderer.FriendlyName} 长时间阻塞后已重新加入共享播放",
+                            $"{renderer.FriendlyName} rejoined shared playback after a long transport stall"));
+                        return;
+                    }
+                    lastFailure = result.Error;
+                }
+
+                var waitsForRediscovery = false;
+                lock (_sessionGate)
+                {
+                    if (ReferenceEquals(_activeMiPlaySharedSession, sharedSession) &&
+                        _miPlaySessions.Values.Any(session =>
+                            ReferenceEquals(session.SharedAudioSession, sharedSession)))
+                    {
+                        _pendingMiPlayRejoins[renderer.Udn] = new PendingMiPlayRejoin(
+                            renderer,
+                            failed.ChannelRoute);
+                        waitsForRediscovery = true;
+                    }
+                }
+                if (waitsForRediscovery)
+                {
+                    await RunOnUiAsync(() =>
+                    {
+                        StatusText = SystemLanguage.Select(
+                            $"{renderer.FriendlyName} 暂时离线，其他音箱继续播放；发现它后将自动重新加入",
+                            $"{renderer.FriendlyName} is offline. Other speakers continue, and it will rejoin when rediscovered.");
+                        _logger.Info(SystemLanguage.Select(
+                            $"{renderer.FriendlyName} 五次重连失败，等待 SSDP 重新发现后加入原共享会话",
+                            $"Five rejoin attempts for {renderer.FriendlyName} failed; waiting for SSDP rediscovery before rejoining the original shared session."));
+                    }).ConfigureAwait(false);
+                    return;
+                }
+
+                throw new InvalidOperationException(SystemLanguage.Select(
+                    $"{renderer.FriendlyName} 长时间阻塞后的五次重新加入均失败。",
+                    $"All five rejoin attempts failed after {renderer.FriendlyName} stalled."),
+                    lastFailure);
+            }
+            finally
+            {
+                lock (_sessionGate)
+                {
+                    _recoveringMiPlayMembers.Remove(renderer.Udn);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            await RunOnUiAsync(() =>
+            {
+                ErrorText = exception.Message;
+                _logger.Error(SystemLanguage.Select(
+                    $"恢复 {renderer.FriendlyName} 的共享播放失败",
+                    $"Failed to recover shared playback for {renderer.FriendlyName}"), exception);
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            _selectionGate.Release();
+        }
+    }
+
+    private bool IsRendererAssignedToRoute(
+        RendererItemViewModel renderer,
+        AudioChannelRoute route) => route switch
+    {
+        AudioChannelRoute.LeftAsMono => renderer.IsLeftChannel,
+        AudioChannelRoute.RightAsMono => renderer.IsRightChannel,
+        _ => renderer.IsSelected,
+    };
+
+    private async Task RediscoverPendingMiPlayMembersAsync(CancellationToken cancellationToken)
+    {
+        PendingMiPlayRejoin[] pending;
+        lock (_sessionGate)
+        {
+            pending = [.. _pendingMiPlayRejoins.Values];
+        }
+        if (pending.Length == 0 || !await _discoveryGate.WaitAsync(0, cancellationToken)) return;
+
+        IReadOnlyList<RendererDevice> devices;
+        try
+        {
+            devices = await _discovery.SearchAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _discoveryGate.Release();
+        }
+
+        foreach (var desired in pending)
+        {
+            var device = devices.FirstOrDefault(candidate =>
+                string.Equals(candidate.Udn, desired.Renderer.Udn, StringComparison.OrdinalIgnoreCase));
+            if (device is null) continue;
+
+            await RunOnUiAsync(() => desired.Renderer.UpdateDevice(device)).ConfigureAwait(false);
+            await _selectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                MiPlaySharedAudioSession? sharedSession;
+                CaptureSelection? selection;
+                string? ffmpegPath;
+                lock (_sessionGate)
+                {
+                    if (!_pendingMiPlayRejoins.TryGetValue(desired.Renderer.Udn, out var current) ||
+                        !ReferenceEquals(current, desired))
+                    {
+                        continue;
+                    }
+                    sharedSession = _activeMiPlaySharedSession;
+                    selection = _activeMiPlayGroupSelection;
+                    ffmpegPath = _activeMiPlayGroupFfmpegPath;
+                }
+
+                if (!IsRendererAssignedToRoute(desired.Renderer, desired.ChannelRoute) ||
+                    sharedSession is null || selection is null || ffmpegPath is null)
+                {
+                    lock (_sessionGate) _pendingMiPlayRejoins.Remove(desired.Renderer.Udn);
+                    continue;
+                }
+
+                var result = await StartMiPlayTargetAsync(
+                        desired.Renderer,
+                        selection,
+                        desired.ChannelRoute,
+                        sharedAudioSession: sharedSession,
+                        originalSelection: selection,
+                        ffmpegPath: ffmpegPath,
+                        waitUntilReady: true)
+                    .ConfigureAwait(false);
+                if (result.Error is not null)
+                {
+                    _logger.Error(SystemLanguage.Select(
+                        $"重新发现 {desired.Renderer.FriendlyName} 后加入共享播放失败，继续等待下一次发现",
+                        $"{desired.Renderer.FriendlyName} was rediscovered but failed to rejoin shared playback; waiting for the next discovery."),
+                        result.Error);
+                    continue;
+                }
+
+                lock (_sessionGate) _pendingMiPlayRejoins.Remove(desired.Renderer.Udn);
+                await RunOnUiAsync(() =>
+                {
+                    StatusText = SystemLanguage.Select(
+                        $"{desired.Renderer.FriendlyName} 已重新加入共享播放",
+                        $"{desired.Renderer.FriendlyName} rejoined shared playback.");
+                    _logger.Info(SystemLanguage.Select(
+                        $"重新发现 {desired.Renderer.FriendlyName} 后已加入原共享会话",
+                        $"{desired.Renderer.FriendlyName} rejoined the original shared session after rediscovery."));
+                    NotifyCastStateChanged();
+                }).ConfigureAwait(false);
+            }
+            finally
+            {
+                _selectionGate.Release();
+            }
+        }
+    }
 
     private void NotifyCastStateChanged()
     {
         UpdateCastDurationState(IsCasting);
+        SpeakerPlaybackStatusText = GetSpeakerPlaybackStatusText();
         foreach (var renderer in Renderers) renderer.IsSelectionEnabled = !IsBusy;
         if (!IsCasting) ProfileText = SelectedTransportProfileText;
         OnPropertyChanged(nameof(IsCasting));
@@ -1763,9 +2651,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         OnPropertyChanged(nameof(InactiveStatusVisibility));
         OnPropertyChanged(nameof(CanUseProcessCapture));
         OnPropertyChanged(nameof(CanChangeTransport));
+        OnPropertyChanged(nameof(CanChangeMiPlayTimeOffset));
         OnPropertyChanged(nameof(CanUseSpeakerOnlyPlayback));
         OnPropertyChanged(nameof(CanUseStereoSplit));
+        OnPropertyChanged(nameof(MiPlayPlaybackControlVisibility));
         RefreshSourcesCommand.RaiseCanExecuteChanged();
+        TestLatencyCommand.RaiseCanExecuteChanged();
+        RaiseMiPlayPlaybackControlStateChanged();
+        if (!IsCasting && !IsLatencyTesting)
+        {
+            ResetLatencyTestDisplay();
+        }
     }
 
     private void UpdateCastDurationState(bool isCasting)
@@ -1796,8 +2692,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private async Task SaveSpeakerOnlyPlaybackAsync(AppSettings settings)
     {
+        var entered = false;
         try
         {
+            await _settingsSaveGate.WaitAsync(_lifetime.Token);
+            entered = true;
             await _settingsStore.SaveAsync(settings, _lifetime.Token);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
@@ -1809,6 +2708,35 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 "保存仅音箱播放设置失败",
                 "Failed to save the speakers-only setting"), exception);
             await RunOnUiAsync(() => ErrorText = exception.Message);
+        }
+        finally
+        {
+            if (entered) _settingsSaveGate.Release();
+        }
+    }
+
+    private async Task SaveMiPlayTimeOffsetAsync(AppSettings settings)
+    {
+        var entered = false;
+        try
+        {
+            await _settingsSaveGate.WaitAsync(_lifetime.Token);
+            entered = true;
+            await _settingsStore.SaveAsync(settings, _lifetime.Token);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(SystemLanguage.Select(
+                "保存 TIME_OFFSET 设置失败",
+                "Failed to save the TIME_OFFSET setting"), exception);
+            await RunOnUiAsync(() => ErrorText = exception.Message);
+        }
+        finally
+        {
+            if (entered) _settingsSaveGate.Release();
         }
     }
 
@@ -1824,6 +2752,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 RefreshNetworkStatus();
+                bool hasPendingMiPlayRejoins;
+                lock (_sessionGate)
+                {
+                    hasPendingMiPlayRejoins = _pendingMiPlayRejoins.Count > 0;
+                }
+                if (hasPendingMiPlayRejoins)
+                {
+                    await RediscoverPendingMiPlayMembersAsync(cancellationToken);
+                    discoveryRetry = initialDiscoveryRetry;
+                    nextDiscoveryRetryAt = DateTimeOffset.UtcNow + discoveryRetry;
+                    continue;
+                }
                 if (IsCasting || Renderers.Count > 0)
                 {
                     discoveryRetry = initialDiscoveryRetry;
@@ -1910,18 +2850,27 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         MiPlaySystemAudioTransmitter transmitter,
         EventHandler<MiPlayCastDiagnostics> handler,
         CaptureSelection originalSelection,
-        ILocalOutputLease? localMuteLease)
+        ILocalOutputLease? localMuteLease,
+        AudioChannelRoute channelRoute,
+        MiPlaySharedAudioSession? sharedAudioSession)
     {
         public RendererItemViewModel Renderer { get; } = renderer;
         public MiPlaySystemAudioTransmitter Transmitter { get; } = transmitter;
         public EventHandler<MiPlayCastDiagnostics> Handler { get; } = handler;
         public CaptureSelection OriginalSelection { get; set; } = originalSelection;
         public ILocalOutputLease? LocalMuteLease { get; set; } = localMuteLease;
+        public AudioChannelRoute ChannelRoute { get; } = channelRoute;
+        public MiPlaySharedAudioSession? SharedAudioSession { get; } = sharedAudioSession;
+        public MiPlayCastDiagnostics Diagnostics { get; set; } = transmitter.Diagnostics;
     }
 
     private sealed record StartResult(string Udn, string RendererName, Exception? Error);
 
     private sealed record StereoTarget(
+        RendererItemViewModel Renderer,
+        AudioChannelRoute ChannelRoute);
+
+    private sealed record PendingMiPlayRejoin(
         RendererItemViewModel Renderer,
         AudioChannelRoute ChannelRoute);
 

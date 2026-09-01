@@ -33,6 +33,13 @@ internal sealed class MiPlayLegacyRuntimeControlSequence(
             [],
             waitForAcknowledgement: false);
 
+    public MiPlayLegacyRuntimeControlCommand PrepareClose() =>
+        Prepare(
+            MiPlayProtocolConstants.CloseDeviceCommand,
+            MiPlayProtocolConstants.CloseDeviceAcknowledgementCommand,
+            [],
+            waitForAcknowledgement: false);
+
     public MiPlayLegacyRuntimeControlCommand PrepareResume() =>
         Prepare(
             MiPlayProtocolConstants.ResumeCommand,

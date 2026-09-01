@@ -304,6 +304,8 @@ public sealed class MiPlayProtocolTests
         Assert.Equal(TimeSpan.FromMilliseconds(800), TimeSpan.FromMicroseconds(MiPlayProtocolConstants.FiveGigahertzPlaybackDelayMicroseconds));
         Assert.Equal(TimeSpan.FromSeconds(1), TimeSpan.FromMicroseconds(MiPlayProtocolConstants.OtherNetworkPlaybackDelayMicroseconds));
         Assert.Equal(TimeSpan.Zero, TimeSpan.FromMicroseconds(MiPlayProtocolConstants.SystemAudioPlaybackDelayMicroseconds));
+        Assert.Equal(TimeSpan.Zero, TimeSpan.FromMicroseconds(MiPlayProtocolConstants.MinimumConfigurablePlaybackDelayMicroseconds));
+        Assert.Equal(TimeSpan.FromSeconds(2), TimeSpan.FromMicroseconds(MiPlayProtocolConstants.MaximumConfigurablePlaybackDelayMicroseconds));
     }
 
     [Theory]

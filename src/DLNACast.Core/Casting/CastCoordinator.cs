@@ -370,6 +370,45 @@ public sealed class CastCoordinator(
         }
     }
 
+    public async Task<long> StartLatencyProbeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        LatencyProbePlayback playback;
+        CancellationToken lifetimeToken;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!IsCasting || _frames is null || _lifetime is null)
+            {
+                throw new InvalidOperationException(SystemLanguage.Select(
+                    "只能在投送期间测试延迟。",
+                    "Latency can be tested only while casting."));
+            }
+
+            playback = _frames.ScheduleLatencyProbe();
+            lifetimeToken = _lifetime.Token;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            lifetimeToken);
+        try
+        {
+            return await playback.StartedAt
+                .WaitAsync(TimeSpan.FromSeconds(1), linked.Token)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            playback.Cancel();
+            throw;
+        }
+    }
+
     public async Task StopAsync()
     {
         await _gate.WaitAsync().ConfigureAwait(false);

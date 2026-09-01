@@ -8,12 +8,13 @@ namespace DLNACast.Core.MiPlay;
 /// </summary>
 public sealed class MiPlayFfmpegAacEncoder : IAsyncDisposable
 {
-    public const int InputSampleRate = 44_100;
+    public const int InputSampleRate = 48_000;
     public const int InputChannels = 2;
     public const int InputBitsPerSample = 16;
     public const int OutputSampleRate = 48_000;
     public const int OutputChannels = 2;
     public const int OutputBitRate = 128_000;
+    public const int InputProbeSizeBytes = 32;
 
     private readonly Process process;
     private readonly MiPlayAdtsStreamParser parser = new();
@@ -50,6 +51,11 @@ public sealed class MiPlayFfmpegAacEncoder : IAsyncDisposable
             "-hide_banner",
             "-loglevel", "error",
             "-nostdin",
+            // The format, rate, channels, and sample width are all explicit.
+            // Without a bounded probe FFmpeg still buffers about 200 AAC-sized
+            // PCM frames before starting aac_mf, adding more than four seconds
+            // of content age to a live stream.
+            "-probesize", InputProbeSizeBytes.ToString(),
             "-f", "s16le",
             "-ar", InputSampleRate.ToString(),
             "-ac", InputChannels.ToString(),

@@ -53,4 +53,63 @@ internal static class MiPlayMediaStallRecoveryPlan
             1_000d));
         return checked(mediaWriteCompletedAt + nominalTicks - dueAfterAccessUnits);
     }
+
+    public static uint CalculateTimelineAdvance90Khz(
+        long previousMediaStartedAt,
+        long rebasedMediaStartedAt,
+        long stopwatchFrequency,
+        bool captureTimelineReanchored = false)
+    {
+        if (previousMediaStartedAt < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(previousMediaStartedAt));
+        }
+        if (rebasedMediaStartedAt < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rebasedMediaStartedAt));
+        }
+        if (stopwatchFrequency <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(stopwatchFrequency));
+        }
+        if (captureTimelineReanchored)
+        {
+            return 0;
+        }
+        if (rebasedMediaStartedAt <= previousMediaStartedAt)
+        {
+            return 0;
+        }
+
+        var advanceTicks = rebasedMediaStartedAt - previousMediaStartedAt;
+        return checked((uint)Math.Round(
+            advanceTicks * (double)MiPlayWfdMediaClock.ProgramClockRate /
+            stopwatchFrequency));
+    }
+
+    public static ulong CalculateRuntimeTimeOffsetMicroseconds(
+        ulong currentMonotonicMicroseconds,
+        ulong mediaPosition90Khz,
+        int playbackDelayMicroseconds)
+    {
+        if (playbackDelayMicroseconds < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(playbackDelayMicroseconds));
+        }
+
+        var mediaPositionMicroseconds = checked((ulong)(
+            ((UInt128)mediaPosition90Khz * MiPlayWfdMediaClock.MicrosecondsPerSecond) /
+            MiPlayWfdMediaClock.ProgramClockRate));
+        if (currentMonotonicMicroseconds < mediaPositionMicroseconds)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(currentMonotonicMicroseconds),
+                "The sender clock must not precede the current media position.");
+        }
+
+        return MiPlayWfdMediaClock.CreateTabletTimeOffsetMicroseconds(
+            currentMonotonicMicroseconds,
+            mediaPositionMicroseconds,
+            playbackDelayMicroseconds);
+    }
 }

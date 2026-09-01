@@ -8,6 +8,47 @@ namespace DLNACast.Tests;
 public sealed class MiPlaySystemAudioTransmitterTests
 {
     [Fact]
+    public void SharedBroadcastErrorIncludesTheUnderlyingFailure()
+    {
+        var cause = new TimeoutException("MiPlay command 0x001A sequence 0x0022 was not acknowledged.");
+        var wrapped = new InvalidOperationException("Shared MiPlay access-unit broadcasting failed.",
+            new IOException("route stopped", cause));
+
+        var description = MiPlaySystemAudioTransmitter.DescribeFailure(wrapped);
+        Assert.Contains(wrapped.Message, description);
+        Assert.Contains(cause.Message, description);
+        Assert.Equal(cause.Message, MiPlaySystemAudioTransmitter.DescribeFailure(cause));
+    }
+
+    [Fact]
+    public void RuntimeTransportFailuresRejoinButEquivalentStartupFailuresDoNot()
+    {
+        var heartbeat = new TimeoutException(
+            "MiPlay received no heartbeat activity for more than fifteen seconds.");
+        var disconnected = new IOException(
+            "The receiver closed the runtime command connection.");
+        var hostAbort = new IOException(
+            "Unable to write data to the transport connection.",
+            new SocketException((int)SocketError.ConnectionAborted));
+
+        Assert.Equal(
+            MiPlayCastFailureKind.TransportStall,
+            MiPlaySystemAudioTransmitter.ClassifyFailure(heartbeat, wasStreaming: true));
+        Assert.Equal(
+            MiPlayCastFailureKind.TransportStall,
+            MiPlaySystemAudioTransmitter.ClassifyFailure(disconnected, wasStreaming: true));
+        Assert.Equal(
+            MiPlayCastFailureKind.TransportStall,
+            MiPlaySystemAudioTransmitter.ClassifyFailure(hostAbort, wasStreaming: true));
+        Assert.Equal(
+            MiPlayCastFailureKind.None,
+            MiPlaySystemAudioTransmitter.ClassifyFailure(heartbeat, wasStreaming: false));
+        Assert.Equal(
+            MiPlayCastFailureKind.ReceiverBusy,
+            MiPlaySystemAudioTransmitter.ClassifyFailure(hostAbort, wasStreaming: false));
+    }
+
+    [Fact]
     public async Task StartWaitsForReceiverReadyAndStopCancelsTheOwnedSession()
     {
         var runner = new BlockingRunner();
@@ -177,13 +218,84 @@ public sealed class MiPlaySystemAudioTransmitterTests
             transmitter.SetReceiverVolumeAsync(101));
     }
 
-    private sealed class BlockingRunner : IMiPlaySystemAudioSessionRunner, IMiPlayAudioCaptureController
+    [Fact]
+    public async Task ForwardsLatencyProbeWithoutRestartingTheStreamingSession()
     {
+        var runner = new BlockingRunner();
+        await using var transmitter = new MiPlaySystemAudioTransmitter(runner);
+        var request = MiPlayCastContractsTests.CreateRequest(
+            new CaptureSelection.SystemMix("default", "Default output"));
+        await transmitter.BeginStartAsync(request);
+        await runner.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        runner.MarkReady();
+
+        await transmitter.PrepareLatencyProbeAsync();
+        var startedAt = await transmitter.StartLatencyProbeAsync();
+
+        Assert.Equal(BlockingRunner.ProbeTimestamp, startedAt);
+        Assert.True(transmitter.IsActive);
+        Assert.Equal(1, runner.LatencyProbePreparations);
+        Assert.Equal(1, runner.LatencyProbeRequests);
+        await transmitter.StopAsync();
+    }
+
+    [Fact]
+    public async Task ExposesPauseResumeAndGracefulCloseOnTheActiveControlPlane()
+    {
+        var runner = new PlaybackRunner();
+        await using var transmitter = new MiPlaySystemAudioTransmitter(runner);
+        var request = MiPlayCastContractsTests.CreateRequest(
+            new CaptureSelection.SystemMix("default", "Default output"));
+        await transmitter.StartAsync(request).WaitAsync(TimeSpan.FromSeconds(2));
+
+        await transmitter.PauseAsync();
+        Assert.True(transmitter.ReceiverPaused);
+        Assert.Equal(1, runner.PauseCount);
+
+        await transmitter.ResumeAsync();
+        Assert.False(transmitter.ReceiverPaused);
+        Assert.Equal(1, runner.ResumeCount);
+
+        await transmitter.StopAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, runner.CloseCount);
+        Assert.True(runner.CancellationObserved);
+    }
+
+    [Fact]
+    public async Task ReceiverOnlyPlaybackControlDoesNotUseTheCapturePausingPath()
+    {
+        var runner = new PlaybackRunner();
+        await using var transmitter = new MiPlaySystemAudioTransmitter(runner);
+        var request = MiPlayCastContractsTests.CreateRequest(
+            new CaptureSelection.SystemMix("default", "Default output"));
+        await transmitter.StartAsync(request).WaitAsync(TimeSpan.FromSeconds(2));
+
+        await transmitter.PauseReceiverAsync();
+        Assert.True(transmitter.ReceiverPaused);
+        Assert.Equal(1, runner.ReceiverOnlyPauseCount);
+        Assert.Equal(0, runner.PauseCount);
+
+        await transmitter.ResumeReceiverAsync();
+        Assert.False(transmitter.ReceiverPaused);
+        Assert.Equal(1, runner.ReceiverOnlyResumeCount);
+        Assert.Equal(0, runner.ResumeCount);
+
+        await transmitter.StopAsync().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    private sealed class BlockingRunner :
+        IMiPlaySystemAudioSessionRunner,
+        IMiPlayAudioCaptureController,
+        IMiPlayLatencyProbeController
+    {
+        public const long ProbeTimestamp = 123_456;
         private Action? ready;
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool CancellationObserved { get; private set; }
         public MiPlaySystemAudioRequest? Request { get; private set; }
         public CaptureSelection? LiveSelection { get; private set; }
+        public int LatencyProbeRequests { get; private set; }
+        public int LatencyProbePreparations { get; private set; }
 
         public async Task RunAsync(
             MiPlaySystemAudioRequest request,
@@ -212,6 +324,18 @@ public sealed class MiPlaySystemAudioTransmitterTests
             CancellationToken cancellationToken = default)
         {
             LiveSelection = selection;
+            return Task.CompletedTask;
+        }
+
+        public Task<long> StartLatencyProbeAsync(CancellationToken cancellationToken = default)
+        {
+            LatencyProbeRequests++;
+            return Task.FromResult(ProbeTimestamp);
+        }
+
+        public Task PrepareLatencyProbeAsync(CancellationToken cancellationToken = default)
+        {
+            LatencyProbePreparations++;
             return Task.CompletedTask;
         }
     }
@@ -249,6 +373,75 @@ public sealed class MiPlaySystemAudioTransmitterTests
         }
 
         public void MarkReady() => ready!();
+    }
+
+    private sealed class PlaybackRunner : IMiPlaySystemAudioSessionRunner, IMiPlayPlaybackController
+    {
+        public bool ReceiverPaused { get; private set; }
+        public int PauseCount { get; private set; }
+        public int ResumeCount { get; private set; }
+        public int ReceiverOnlyPauseCount { get; private set; }
+        public int ReceiverOnlyResumeCount { get; private set; }
+        public int CloseCount { get; private set; }
+        public bool CancellationObserved { get; private set; }
+
+        public async Task RunAsync(
+            MiPlaySystemAudioRequest request,
+            Action receiverReady,
+            Action<MiPlayCastDiagnostics> report,
+            CancellationToken cancellationToken)
+        {
+            receiverReady();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                CancellationObserved = true;
+                throw;
+            }
+        }
+
+        public Task PauseAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            PauseCount++;
+            ReceiverPaused = true;
+            return Task.CompletedTask;
+        }
+
+        public Task ResumeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ResumeCount++;
+            ReceiverPaused = false;
+            return Task.CompletedTask;
+        }
+
+        public Task PauseReceiverAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ReceiverOnlyPauseCount++;
+            ReceiverPaused = true;
+            return Task.CompletedTask;
+        }
+
+        public Task ResumeReceiverAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ReceiverOnlyResumeCount++;
+            ReceiverPaused = false;
+            return Task.CompletedTask;
+        }
+
+        public Task CloseAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CloseCount++;
+            ReceiverPaused = false;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FailingRunner(Exception exception) : IMiPlaySystemAudioSessionRunner

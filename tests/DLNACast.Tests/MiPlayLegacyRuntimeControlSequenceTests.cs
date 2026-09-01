@@ -55,6 +55,22 @@ public sealed class MiPlayLegacyRuntimeControlSequenceTests
     }
 
     [Fact]
+    public void CloseSharesTheRuntimeSequenceAndDoesNotWaitForAnOptionalReply()
+    {
+        var sequence = new MiPlayLegacyRuntimeControlSequence();
+
+        var close = sequence.PrepareClose();
+        var heartbeat = sequence.PrepareHeartbeat();
+
+        AssertCommand(close, MiPlayProtocolConstants.CloseDeviceCommand, 16, "");
+        Assert.Equal(
+            MiPlayProtocolConstants.CloseDeviceAcknowledgementCommand,
+            close.AcknowledgementCommand);
+        Assert.False(close.WaitForAcknowledgement);
+        AssertCommand(heartbeat, MiPlayProtocolConstants.HeartbeatCommand, 17, "");
+    }
+
+    [Fact]
     public void AcceptsOnlySameSequenceSamePayloadSetVolumeAcknowledgement()
     {
         var command = new MiPlayLegacyRuntimeControlSequence().PrepareSetVolume(36);

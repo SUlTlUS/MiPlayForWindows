@@ -1,9 +1,92 @@
+using System.Numerics;
 using DLNACast.Core.MiPlay;
+using DLNACast.Tests.References;
 
 namespace DLNACast.Tests;
 
 public sealed class MiPlayWfdMediaClockTests
 {
+    [Theory]
+    [InlineData(58_878_859_721UL, 0UL, 1_000_000, 58_879_859_721UL)]
+    [InlineData(58_878_859_721UL, 21_333UL, 1_000_000, 58_879_838_388UL)]
+    [InlineData(58_878_859_721UL, 58_878_859_721UL, 0, 0UL)]
+    public void TabletTimeOffsetUsesServerClockMinusFirstAudioPtsPlusDelay(
+        ulong serverNow, ulong firstAudioPts, int delay, ulong expected)
+    {
+        Assert.Equal(expected, MiPlayWfdMediaClock.CreateTabletTimeOffsetMicroseconds(
+            serverNow, firstAudioPts, delay));
+    }
+
+    [Fact]
+    public void TabletTimeOffsetChecksClockOrderDelayAndOverflow()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MiPlayWfdMediaClock.CreateTabletTimeOffsetMicroseconds(99, 100, 1_000_000));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            MiPlayWfdMediaClock.CreateTabletTimeOffsetMicroseconds(100, 0, -1));
+        Assert.Throws<OverflowException>(() =>
+            MiPlayWfdMediaClock.CreateTabletTimeOffsetMicroseconds(ulong.MaxValue, 0, 1));
+    }
+
+    [Theory]
+    [InlineData(0UL, 0UL)]
+    [InlineData(1UL, 27UL)]
+    [InlineData(58_878_863_788UL, 1_589_729_322_276UL)]
+    public void TabletPcrUsesRawPacketizationClockWithoutSubtractingDelay(
+        ulong nativeNow, ulong expected)
+    {
+        Assert.Equal(expected,
+            MiPlayWfdMediaClock.CreateTabletProgramClockReference27Mhz(nativeNow));
+    }
+
+    [Theory]
+    [InlineData(0UL, 0UL)]
+    [InlineData(1UL, 27UL)]
+    [InlineData(10UL, 270UL)]
+    [InlineData(11UL, 297UL)]
+    [InlineData(12UL, 324UL)]
+    public void RetainsNative27MhzFractionAfterTheExistingDelay(ulong elapsedUs, ulong expectedPcr)
+    {
+        Assert.Equal(expectedPcr, MiPlayWfdMediaClock.CreateProgramClockReference27Mhz(1_000_000 + elapsedUs, 1_000_000));
+    }
+
+    [Fact]
+    public void FullPcrMatchesNativeConversionWithoutChangingAnyLegacyBaseTick()
+    {
+        for (ulong i = 0; i < 1000; i++)
+        {
+            var captureUs = 58_878_863_788 + i;
+            var pcr = MiPlayWfdMediaClock.CreateProgramClockReference27Mhz(captureUs, 1_000_000);
+            Assert.Equal(MiPlayTabletOutputTimeline.CreatePcr27Mhz((long)captureUs - 1_000_000), pcr);
+            Assert.Equal(MiPlayWfdMediaClock.CreateInitialProgramClockReference90Khz(captureUs, 1_000_000), pcr / 300);
+            Assert.InRange(pcr % 300, 0UL, 299UL);
+        }
+    }
+
+    [Fact]
+    public void FullPcrWrapsThe33BitBaseAndCarriesTheExtension()
+    {
+        var before = MiPlayWfdMediaClock.CreateProgramClockReference27Mhz(95_443_717_688, 0);
+        var after = MiPlayWfdMediaClock.CreateProgramClockReference27Mhz(95_443_717_689, 0);
+
+        Assert.Equal(2_576_980_377_576UL, before);
+        Assert.Equal(8_589_934_591UL, before / 300);
+        Assert.Equal(276UL, before % 300);
+        Assert.Equal(3UL, after);
+        Assert.Equal(27UL, MiPlayWfdMediaClock.ProgramClockModulus27Mhz - before + after);
+    }
+
+    [Fact]
+    public void FullPcrConversionAvoidsUptimeOverflowAndRejectsInvalidOrigins()
+    {
+        var pcr = MiPlayWfdMediaClock.CreateProgramClockReference27Mhz(ulong.MaxValue, 0);
+        var expected = (ulong)((new BigInteger(ulong.MaxValue) * 27) % ((BigInteger.One << 33) * 300));
+        Assert.Equal(expected, pcr);
+        Assert.Equal(MiPlayWfdMediaClock.CreateInitialProgramClockReference90Khz(ulong.MaxValue, 0), pcr / 300);
+        Assert.Throws<ArgumentOutOfRangeException>(() => MiPlayWfdMediaClock.CreateProgramClockReference27Mhz(999, 1000));
+        Assert.Throws<ArgumentOutOfRangeException>(() => MiPlayWfdMediaClock.CreateProgramClockReference27Mhz(1000, -1));
+    }
+
     [Fact]
     public void CapturedFirstPcrIsAboutOneSecondBeforeRtspTimeOffset()
     {
@@ -23,6 +106,29 @@ public sealed class MiPlayWfdMediaClockTests
             Math.Abs((long)capturedInitialPcr90Khz - (long)derivedInitialPcr),
             0,
             MiPlayWfdAudioPacketizer.TimestampStep90Khz);
+    }
+
+    [Fact]
+    public void TabletFormulaReconstructsCapturedTimeOffsetFromRawPcrClock()
+    {
+        const ulong capturedTimeOffsetMicroseconds = 9_633_364_443;
+        const ulong capturedInitialPcr90Khz = 866_913_276;
+        var packetizationNowMicroseconds = checked(
+            capturedInitialPcr90Khz * MiPlayWfdMediaClock.MicrosecondsPerSecond /
+            MiPlayWfdMediaClock.ProgramClockRate);
+
+        var reconstructed = MiPlayWfdMediaClock.CreateTabletTimeOffsetMicroseconds(
+            packetizationNowMicroseconds,
+            firstAudioPresentationTimeMicroseconds: 0,
+            playbackDelayMicroseconds: MiPlayProtocolConstants.OtherNetworkPlaybackDelayMicroseconds);
+
+        // The capture contains only the 90-kHz PCR base and RTSP/PCR were
+        // recorded several milliseconds apart, so exact equality is neither
+        // available nor expected. It still lands inside one AAC frame.
+        Assert.InRange(
+            Math.Abs((long)reconstructed - (long)capturedTimeOffsetMicroseconds),
+            0,
+            21_333);
     }
 
     [Fact]

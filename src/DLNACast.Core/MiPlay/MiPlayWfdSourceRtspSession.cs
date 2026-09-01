@@ -35,15 +35,24 @@ public sealed class MiPlayWfdSourceRtspSession
     private readonly IPAddress sourceAddress;
     private readonly int timerPort;
     private readonly string sessionId;
+    private readonly bool waitForInitialTimeOffsetAcknowledgement;
+    private readonly bool waitForRuntimeTimeOffsetAcknowledgement;
     private bool sourceOptionsAcknowledged;
     private bool receiverOptionsObserved;
+    private bool initialTimeOffsetReplaced;
     private ulong? timeOffsetMicroseconds;
+    private int nextRuntimeTimeOffsetCSeq = 6;
+    private int lastWrittenRuntimeTimeOffsetCSeq;
+    private int? pendingRuntimeTimeOffsetCSeq;
+    private ulong? pendingRuntimeTimeOffsetMicroseconds;
     private MiPlayWfdSourceRtspPhase phase = MiPlayWfdSourceRtspPhase.Created;
 
     public MiPlayWfdSourceRtspSession(
         IPAddress sourceAddress,
         int timerPort,
-        string sessionId)
+        string sessionId,
+        bool waitForInitialTimeOffsetAcknowledgement = true,
+        bool waitForRuntimeTimeOffsetAcknowledgement = true)
     {
         ArgumentNullException.ThrowIfNull(sourceAddress);
         if (sourceAddress.GetAddressBytes().Length != 4)
@@ -63,10 +72,13 @@ public sealed class MiPlayWfdSourceRtspSession
         this.sourceAddress = sourceAddress;
         this.timerPort = timerPort;
         this.sessionId = sessionId;
+        this.waitForInitialTimeOffsetAcknowledgement = waitForInitialTimeOffsetAcknowledgement;
+        this.waitForRuntimeTimeOffsetAcknowledgement = waitForRuntimeTimeOffsetAcknowledgement;
     }
 
     public MiPlayWfdSourceRtspPhase Phase => phase;
     public ulong? TimeOffsetMicroseconds => timeOffsetMicroseconds;
+    public bool RuntimeTimeOffsetPending => pendingRuntimeTimeOffsetCSeq is not null;
 
     public MiPlayWfdSourceRtspTransition Start(DateTimeOffset timestamp)
     {
@@ -119,6 +131,96 @@ public sealed class MiPlayWfdSourceRtspSession
                 ProcessReadyRequest(message, timestamp),
             _ => Stop("Unsupported RTSP phase."),
         };
+    }
+
+    public MiPlayWfdSourceRtspTransition PrepareRuntimeTimeOffset(
+        DateTimeOffset timestamp,
+        ulong monotonicMicroseconds)
+    {
+        if (phase != MiPlayWfdSourceRtspPhase.Ready)
+        {
+            return Reject("Runtime TIME_OFFSET can be updated only after RTSP is ready.");
+        }
+        if (pendingRuntimeTimeOffsetCSeq is not null)
+        {
+            return Reject("A runtime TIME_OFFSET acknowledgement is already pending.");
+        }
+
+        var cseq = nextRuntimeTimeOffsetCSeq++;
+        pendingRuntimeTimeOffsetCSeq = cseq;
+        pendingRuntimeTimeOffsetMicroseconds = monotonicMicroseconds;
+        return Accept(
+            [MiPlayWfdSourceRtspMessages.EncodeTimeOffset(timestamp, monotonicMicroseconds, cseq)],
+            $"Prepared runtime TIME_OFFSET CSeq {cseq}; awaiting its write/acknowledgement completion.");
+    }
+
+    /// <summary>
+    /// The RTSP owner calls this after the bytes were written, never at queue
+    /// insertion. Shared playback follows native sendTimeOffset's asynchronous
+    /// response handling; single-receiver callers retain the ACK gate.
+    /// </summary>
+    public MiPlayWfdSourceRtspTransition MarkRuntimeTimeOffsetSent()
+    {
+        if (phase != MiPlayWfdSourceRtspPhase.Ready || pendingRuntimeTimeOffsetCSeq is not int cseq)
+        {
+            return Reject("No prepared runtime TIME_OFFSET can be marked sent.");
+        }
+        if (waitForRuntimeTimeOffsetAcknowledgement)
+        {
+            return Accept([], "Runtime TIME_OFFSET was sent; preserving the acknowledgement gate.");
+        }
+
+        timeOffsetMicroseconds = pendingRuntimeTimeOffsetMicroseconds ??
+            throw new InvalidOperationException("Runtime TIME_OFFSET lost its pending value.");
+        lastWrittenRuntimeTimeOffsetCSeq = cseq;
+        pendingRuntimeTimeOffsetCSeq = null;
+        pendingRuntimeTimeOffsetMicroseconds = null;
+        return Accept([], $"Runtime TIME_OFFSET CSeq {cseq} was written; shared media does not wait for its acknowledgement.");
+    }
+
+    /// <summary>
+    /// Called only after the initial TIME_OFFSET bytes have been written. The
+    /// tablet posts its offset asynchronously and its onReceiveTimeOffset is a
+    /// no-op; shared media can start without waiting for that response. Keep
+    /// the captured single-receiver acknowledgement gate as the default.
+    /// </summary>
+    public MiPlayWfdSourceRtspTransition MarkInitialTimeOffsetSent()
+    {
+        if (phase != MiPlayWfdSourceRtspPhase.AwaitingTimeOffsetAcknowledgement)
+        {
+            return Reject("Initial TIME_OFFSET can be marked sent only after PLAY prepared it.");
+        }
+        if (waitForInitialTimeOffsetAcknowledgement)
+        {
+            return Accept([], "Initial TIME_OFFSET was sent; preserving the captured acknowledgement gate.");
+        }
+
+        phase = MiPlayWfdSourceRtspPhase.Ready;
+        return Accept([], "Initial TIME_OFFSET was sent; shared media does not wait for its acknowledgement.");
+    }
+
+    public MiPlayWfdSourceRtspTransition ReplacePendingInitialTimeOffset(
+        DateTimeOffset timestamp,
+        ulong synchronizedTimeOffsetMicroseconds)
+    {
+        if (phase != MiPlayWfdSourceRtspPhase.AwaitingTimeOffsetAcknowledgement)
+        {
+            return Reject("The initial TIME_OFFSET can be replaced only before its bytes are sent.");
+        }
+        if (waitForInitialTimeOffsetAcknowledgement)
+        {
+            return Reject("Single-receiver TIME_OFFSET keeps the captured PLAY clock.");
+        }
+        if (initialTimeOffsetReplaced)
+        {
+            return Reject("The shared initial TIME_OFFSET was already derived from its first output clock.");
+        }
+
+        timeOffsetMicroseconds = synchronizedTimeOffsetMicroseconds;
+        initialTimeOffsetReplaced = true;
+        return Accept(
+            [MiPlayWfdSourceRtspMessages.EncodeTimeOffset(timestamp, synchronizedTimeOffsetMicroseconds)],
+            "Prepared the tablet-style initial TIME_OFFSET from the first shared output clock.");
     }
 
     private MiPlayWfdSourceRtspTransition ProcessInitialOptions(
@@ -269,6 +371,42 @@ public sealed class MiPlayWfdSourceRtspSession
         MiPlayRtspWireMessage message,
         DateTimeOffset timestamp)
     {
+        if (message.StartLine.StartsWith("RTSP/", StringComparison.Ordinal) &&
+            TryGetCSeq(message, out var writtenCSeq) &&
+            ((!waitForInitialTimeOffsetAcknowledgement && writtenCSeq == 5) ||
+             (!waitForRuntimeTimeOffsetAcknowledgement &&
+              writtenCSeq >= 6 && writtenCSeq <= lastWrittenRuntimeTimeOffsetCSeq)))
+        {
+            if (!IsWellFormedTimeOffsetResponse(message))
+            {
+                return Stop($"Invalid TIME_OFFSET response for written CSeq {writtenCSeq}.");
+            }
+            // Tablet onReceiveTimeOffset returns success without inspecting
+            // status or body. This observes a response, not proof that the
+            // receiver applied the offset; only our successful write commits it.
+            // Only TIME_OFFSET uses source CSeq >= 6. A high-water mark keeps
+            // missing replies bounded in memory, and includes only completed
+            // writes. Neither CSeq 5 nor an old runtime reply can consume a
+            // newer prepared request or replace the most recently written offset.
+            return Accept([], $"Observed TIME_OFFSET response CSeq {writtenCSeq} without gating shared media.");
+        }
+        if (waitForRuntimeTimeOffsetAcknowledgement &&
+            pendingRuntimeTimeOffsetCSeq is int pendingCSeq &&
+            message.StartLine.StartsWith("RTSP/", StringComparison.Ordinal))
+        {
+            if (!IsOk(message, pendingCSeq) || message.Body.Length != 0)
+            {
+                return Stop(
+                    $"Expected the empty RTSP 200 CSeq {pendingCSeq} runtime TIME_OFFSET acknowledgement.");
+            }
+
+            timeOffsetMicroseconds = pendingRuntimeTimeOffsetMicroseconds ??
+                throw new InvalidOperationException("Runtime TIME_OFFSET lost its pending value.");
+            pendingRuntimeTimeOffsetCSeq = null;
+            pendingRuntimeTimeOffsetMicroseconds = null;
+            return Accept([], $"Receiver acknowledged runtime TIME_OFFSET CSeq {pendingCSeq}.");
+        }
+
         if (!TryGetCSeq(message, out var cseq))
         {
             return Stop("A ready-state receiver request omitted a valid CSeq.");
@@ -313,6 +451,19 @@ public sealed class MiPlayWfdSourceRtspSession
 
     private static bool IsOk(MiPlayRtspWireMessage message, int cseq) =>
         message.StartLine.Equals("RTSP/1.0 200 OK", StringComparison.Ordinal) && HasCSeq(message, cseq);
+
+    private static bool IsWellFormedTimeOffsetResponse(MiPlayRtspWireMessage message)
+    {
+        // Keep the RTSP/1.0 envelope strict while accepting non-200 responses
+        // and arbitrary, fully framed bodies for a known TIME_OFFSET only.
+        var line = message.StartLine.AsSpan();
+        return line.StartsWith("RTSP/1.0 ", StringComparison.Ordinal) &&
+               line.Length >= 12 &&
+               line[9] is >= '1' and <= '5' &&
+               line[10] is >= '0' and <= '9' &&
+               line[11] is >= '0' and <= '9' &&
+               (line.Length == 12 || line[12] == ' ');
+    }
 
     private static bool HasCSeq(MiPlayRtspWireMessage message, int expected) =>
         TryGetCSeq(message, out var actual) && actual == expected;

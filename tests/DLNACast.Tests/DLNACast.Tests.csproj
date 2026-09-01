@@ -17,4 +17,3 @@
     <ProjectReference Include="..\..\src\DLNACast.Core\DLNACast.Core.csproj" />
   </ItemGroup>
 </Project>
-

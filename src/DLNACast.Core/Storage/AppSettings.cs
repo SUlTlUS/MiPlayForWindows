@@ -9,7 +9,8 @@ public sealed record AppSettings(
     string TransportMode = "DLNA",
     bool AllowMp3Fallback = true,
     bool MinimizeToTray = true,
-    bool SpeakerOnlyPlayback = true);
+    bool SpeakerOnlyPlayback = true,
+    int MiPlayTimeOffsetMilliseconds = 1_000);
 
 public sealed class AppSettingsStore
 {

@@ -11,9 +11,9 @@
     <RootNamespace>DLNACast.App</RootNamespace>
     <AssemblyTitle>MiPlay Cast</AssemblyTitle>
     <Product>MiPlay Cast</Product>
-    <Version>0.2.4.4</Version>
-    <FileVersion>0.2.4.4</FileVersion>
-    <AssemblyVersion>0.2.4.4</AssemblyVersion>
+    <Version>0.2.4.77</Version>
+    <FileVersion>0.2.4.74</FileVersion>
+    <AssemblyVersion>0.2.4.74</AssemblyVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\MiPlay.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

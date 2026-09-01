@@ -38,7 +38,7 @@ public sealed class ProcessLoopbackCaptureSource(CaptureSelection.Process select
             _selection.IncludeChildren,
             _lifetime.Token).ConfigureAwait(false);
 
-        var format = WaveFormatEx.CreateFloatStereo();
+        var format = WaveFormatEx.CreateFloatStereo(destination.Format.SampleRate);
         var formatPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf<WaveFormatEx>());
         try
         {
@@ -178,12 +178,12 @@ internal struct WaveFormatEx
     public ushort BitsPerSample;
     public ushort ExtraSize;
 
-    public static WaveFormatEx CreateFloatStereo() => new()
+    public static WaveFormatEx CreateFloatStereo(int sampleRate = PcmFrameBuffer.SampleRate) => new()
     {
         FormatTag = 3,
         Channels = PcmFrameBuffer.Channels,
-        SamplesPerSecond = PcmFrameBuffer.SampleRate,
-        AverageBytesPerSecond = PcmFrameBuffer.SampleRate * PcmFrameBuffer.Channels * sizeof(float),
+        SamplesPerSecond = checked((uint)sampleRate),
+        AverageBytesPerSecond = checked((uint)(sampleRate * PcmFrameBuffer.Channels * sizeof(float))),
         BlockAlign = PcmFrameBuffer.Channels * sizeof(float),
         BitsPerSample = sizeof(float) * 8,
         ExtraSize = 0

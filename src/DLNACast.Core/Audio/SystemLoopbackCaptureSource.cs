@@ -31,7 +31,10 @@ public sealed class SystemLoopbackCaptureSource(CaptureSelection.SystemMix selec
         var assembler = new PcmFrameAssembler(destination);
         var capture = new WasapiLoopbackCapture(device)
         {
-            WaveFormat = new WaveFormat(PcmFrameBuffer.SampleRate, PcmFrameBuffer.BitsPerSample, PcmFrameBuffer.Channels)
+            WaveFormat = new WaveFormat(
+                destination.Format.SampleRate,
+                destination.Format.BitsPerSample,
+                destination.Format.Channels)
         };
         capture.DataAvailable += (_, args) =>
         {

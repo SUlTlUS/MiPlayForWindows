@@ -7,7 +7,10 @@ public sealed record MiPlayMpegTsAccessUnit(
     int PacketCount,
     ulong PresentationTimestamp90Khz,
     ulong? ProgramClockReference90Khz,
-    bool ContainsProgramTables);
+    bool ContainsProgramTables)
+{
+    public ushort ProgramClockReferenceExtension { get; init; }
+}
 
 /// <summary>
 /// Minimal MPEG-TS muxer for the rooted phone's AAC-only WFD profile:
@@ -51,11 +54,23 @@ public sealed class MiPlayMpegTsAudioMuxer
         audioContinuityCounter = initialAudioContinuityCounter;
     }
 
+    internal MiPlayMpegTsContinuityState CaptureContinuityState() =>
+        new(patContinuityCounter, pmtContinuityCounter, audioContinuityCounter);
+
     public MiPlayMpegTsAccessUnit MuxAdtsAccessUnit(
         ReadOnlySpan<byte> adtsAccessUnit,
         ulong presentationTimestamp90Khz,
-        ulong? programClockReference90Khz = null)
+        ulong? programClockReference90Khz = null,
+        ushort programClockReferenceExtension = 0)
     {
+        if (programClockReferenceExtension >= 300)
+        {
+            throw new ArgumentOutOfRangeException(nameof(programClockReferenceExtension));
+        }
+        if (programClockReferenceExtension != 0 && !programClockReference90Khz.HasValue)
+        {
+            throw new ArgumentException("A PCR extension requires a PCR base.", nameof(programClockReferenceExtension));
+        }
         if (adtsAccessUnit.Length < MiPlayAdtsHeader.Length ||
             adtsAccessUnit[0] != 0xff ||
             (adtsAccessUnit[1] & 0xf0) != 0xf0)
@@ -69,7 +84,7 @@ public sealed class MiPlayMpegTsAudioMuxer
         {
             packets.Add(BuildPatPacket());
             packets.Add(BuildPmtPacket());
-            packets.Add(BuildPcrPacket(pcr));
+            packets.Add(BuildPcrPacket(pcr, programClockReferenceExtension));
         }
 
         PacketizePes(pes, packets);
@@ -84,7 +99,10 @@ public sealed class MiPlayMpegTsAudioMuxer
             packets.Count,
             presentationTimestamp90Khz,
             programClockReference90Khz,
-            ContainsProgramTables: programClockReference90Khz.HasValue);
+            ContainsProgramTables: programClockReference90Khz.HasValue)
+        {
+            ProgramClockReferenceExtension = programClockReferenceExtension,
+        };
     }
 
     private byte[] BuildPatPacket()
@@ -137,13 +155,13 @@ public sealed class MiPlayMpegTsAudioMuxer
         return packet;
     }
 
-    private static byte[] BuildPcrPacket(ulong programClockReference90Khz)
+    private static byte[] BuildPcrPacket(ulong programClockReference90Khz, ushort programClockReferenceExtension)
     {
         var packet = CreateStuffedPacket();
         WriteTsHeader(packet, PcrPid, payloadUnitStart: true, adaptationFieldControl: 2, continuityCounter: 0);
         packet[4] = 183;
         packet[5] = 0x10;
-        WritePcr(packet.AsSpan(6, 6), programClockReference90Khz);
+        WritePcr(packet.AsSpan(6, 6), programClockReference90Khz, programClockReferenceExtension);
         return packet;
     }
 
@@ -229,15 +247,15 @@ public sealed class MiPlayMpegTsAudioMuxer
         destination[4] = (byte)(((pts << 1) & 0xfe) | 1);
     }
 
-    private static void WritePcr(Span<byte> destination, ulong clock90Khz)
+    private static void WritePcr(Span<byte> destination, ulong clock90Khz, ushort extension)
     {
         var pcrBase = clock90Khz & 0x1_ffff_ffffUL;
         destination[0] = (byte)(pcrBase >> 25);
         destination[1] = (byte)(pcrBase >> 17);
         destination[2] = (byte)(pcrBase >> 9);
         destination[3] = (byte)(pcrBase >> 1);
-        destination[4] = (byte)(((pcrBase & 1) << 7) | 0x7e);
-        destination[5] = 0;
+        destination[4] = (byte)(((pcrBase & 1) << 7) | 0x7e | (uint)(extension >> 8));
+        destination[5] = (byte)extension;
     }
 
     private static uint ComputeMpegCrc32(ReadOnlySpan<byte> bytes)
@@ -271,3 +289,8 @@ public sealed class MiPlayMpegTsAudioMuxer
         }
     }
 }
+
+internal readonly record struct MiPlayMpegTsContinuityState(
+    byte PatContinuityCounter,
+    byte PmtContinuityCounter,
+    byte AudioContinuityCounter);

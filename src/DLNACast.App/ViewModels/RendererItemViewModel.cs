@@ -26,7 +26,7 @@ public sealed class RendererItemViewModel(
     private bool _updatingVolume;
     private double _volume = 30;
 
-    public RendererDevice Device { get; } = device;
+    public RendererDevice Device { get; private set; } = device;
     public string Udn => Device.Udn;
     public string FriendlyName => Device.FriendlyName;
     public string DeviceDescription => string.IsNullOrWhiteSpace(Device.ModelName)
@@ -141,6 +141,29 @@ public sealed class RendererItemViewModel(
     public event EventHandler? ChannelAssignmentChanged;
     public event EventHandler? VolumeChanged;
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public void UpdateDevice(RendererDevice device)
+    {
+        if (!string.Equals(Device.Udn, device.Udn, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("A renderer can only be refreshed with the same UDN.", nameof(device));
+        }
+
+        Device = device;
+        OnPropertyChanged(nameof(Device));
+        OnPropertyChanged(nameof(FriendlyName));
+        OnPropertyChanged(nameof(DeviceDescription));
+        OnPropertyChanged(nameof(CanControlVolume));
+        OnPropertyChanged(nameof(CanAdjustVolume));
+        OnPropertyChanged(nameof(CanAdjustLeftChannelVolume));
+        OnPropertyChanged(nameof(CanAdjustRightChannelVolume));
+        OnPropertyChanged(nameof(VolumeText));
+        OnPropertyChanged(nameof(SpeakerVolumeAutomationName));
+        OnPropertyChanged(nameof(LeftChannelSelectionAutomationName));
+        OnPropertyChanged(nameof(RightChannelSelectionAutomationName));
+        OnPropertyChanged(nameof(LeftChannelVolumeAutomationName));
+        OnPropertyChanged(nameof(RightChannelVolumeAutomationName));
+    }
 
     public void SetInitialVolume(int? volume)
     {

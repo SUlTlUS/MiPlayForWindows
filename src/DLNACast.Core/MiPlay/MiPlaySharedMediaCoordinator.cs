@@ -15,6 +15,8 @@ internal sealed class MiPlaySharedMediaCoordinator
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<long> mediaReady =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<long> accessUnitRunwayReady =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource<byte[]> accessUnitReady =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private ulong timeOffsetCandidate;
@@ -22,6 +24,8 @@ internal sealed class MiPlaySharedMediaCoordinator
     private int timeOffsetArrivalCount;
     private ulong mediaArrivals;
     private int mediaArrivalCount;
+    private ulong accessUnitRunwayArrivals;
+    private int accessUnitRunwayArrivalCount;
     private ulong sharedTimeOffset;
     private long nextAccessUnitIndex;
     private ulong accessUnitArrivals;
@@ -43,6 +47,13 @@ internal sealed class MiPlaySharedMediaCoordinator
         ValidateParticipant(participantId);
         return participantId == 1;
     }
+
+    // A receiver may still leave while its ordered AAC runway is filling.
+    // Do not treat the earlier RTSP barrier as completed playback startup.
+    public bool IsMediaReady => accessUnitRunwayReady.Task.IsCompletedSuccessfully;
+
+    public Task WaitUntilMediaReadyAsync(CancellationToken cancellationToken) =>
+        accessUnitRunwayReady.Task.WaitAsync(cancellationToken);
 
     public async Task<ulong> SynchronizeTimeOffsetAsync(
         int participantId,
@@ -105,6 +116,39 @@ internal sealed class MiPlaySharedMediaCoordinator
         return await WaitOrFailAsync(
                 waitTask,
                 "A receiver left during shared media-start synchronization.",
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<long> SynchronizeAccessUnitRunwayAsync(
+        int participantId,
+        CancellationToken cancellationToken)
+    {
+        Task<long> waitTask;
+        long? completedValue = null;
+        lock (gate)
+        {
+            ThrowIfFailed();
+            if (!mediaReady.Task.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException(
+                    "Shared MiPlay media has not completed start synchronization.");
+            }
+            MarkArrival(ref accessUnitRunwayArrivals, participantId, "AAC startup runway");
+            accessUnitRunwayArrivalCount++;
+            waitTask = accessUnitRunwayReady.Task;
+            if (accessUnitRunwayArrivalCount == participantCount)
+            {
+                completedValue = Stopwatch.GetTimestamp();
+            }
+        }
+        if (completedValue is long value)
+        {
+            accessUnitRunwayReady.TrySetResult(value);
+        }
+        return await WaitOrFailAsync(
+                waitTask,
+                "A receiver left during shared AAC startup-runway synchronization.",
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -184,6 +228,7 @@ internal sealed class MiPlaySharedMediaCoordinator
             failure = exception;
             timeOffsetReady.TrySetException(exception);
             mediaReady.TrySetException(exception);
+            accessUnitRunwayReady.TrySetException(exception);
             accessUnitReady.TrySetException(exception);
         }
     }
