@@ -4,30 +4,56 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
         android:allowAudioPlaybackCapture="true"
-        android:label="DLNA Cast"
+        android:description="@string/xposed_description"
+        android:icon="@drawable/ic_launcher"
+        android:label="MiPlay Cast"
         android:supportsRtl="true"
         android:theme="@style/Theme.DLNACast"
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".SystemUiSettingsActivity"
+            android:exported="false" />
+
         <service
             android:name=".service.CastService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection"
+            android:foregroundServiceType="mediaProjection|mediaPlayback"
             android:stopWithTask="false" />
+
+        <service
+            android:name=".systemui.SystemUiBridgeService"
+            android:exported="true"
+            android:permission="android.permission.STATUS_BAR_SERVICE" />
+
+        <provider
+            android:name=".systemui.SystemUiBridgeProvider"
+            android:authorities="com.suitius.dlnacast.systemui"
+            android:directBootAware="true"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+
+        <receiver
+            android:name=".systemui.SystemUiControlReceiver"
+            android:exported="true" />
+
     </application>
 </manifest>

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="xposed_description">把局域网 MiPlay 音箱加入系统媒体输出面板</string>
+</resources>

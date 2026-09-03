@@ -12,8 +12,8 @@ android {
         applicationId = "com.suitius.dlnacast"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 8
+        versionName = "0.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -34,6 +34,7 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        resources.merges += "META-INF/xposed/*"
     }
 }
 
@@ -52,6 +53,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    compileOnly("io.github.libxposed:api:102.0.0")
 
     testImplementation("junit:junit:4.13.2")
 }
